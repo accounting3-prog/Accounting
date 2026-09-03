@@ -110,6 +110,14 @@ export function TransactionDrawer({
             </div>
           </div>
 
+          {t.rate_review_note && (
+            <div className="mb-4">
+              <Notice tone="review" title="Exchange rate note">
+                {t.rate_review_note}
+              </Notice>
+            </div>
+          )}
+
           {t.review_reason && (
             <div className="mb-4">
               <Notice
@@ -199,11 +207,27 @@ export function TransactionDrawer({
               </Row>
             )}
             {t.exchange_rate != null && (
-              <Row label="Rate used">
+              <Row label="Rate in the source">
                 <span className="tnum">{formatRate(t.exchange_rate)}</span>
                 <span className="ml-1.5 text-ink-muted">
                   AED per 1 {t.currency ?? 'unit'}
                 </span>
+              </Row>
+            )}
+            {t.normalized_exchange_rate != null && (
+              <Row label="Rate settled at">
+                <span className="tnum font-medium">
+                  {formatRate(t.normalized_exchange_rate)}
+                </span>
+                <span className="ml-1.5 text-ink-muted">
+                  AED settlement ÷ original amount
+                </span>
+                {t.exchange_rate != null &&
+                  Math.abs(t.exchange_rate - t.normalized_exchange_rate) > 1e-9 && (
+                    <span className="ml-1.5">
+                      <Tag tone="review">differs from source</Tag>
+                    </span>
+                  )}
               </Row>
             )}
           </dl>

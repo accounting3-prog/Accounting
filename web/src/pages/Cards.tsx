@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Page } from '../components/Layout';
-import { Money, Panel, Tag } from '../components/ui';
+import { Button, Money, Panel, Tag } from '../components/ui';
 import { formatCount, formatDate } from '../lib/format';
 import { getCards, getSpendByCurrency } from '../lib/ledger';
 
@@ -11,6 +11,11 @@ export function Cards() {
     <Page
       title="Cards"
       description="One account per sheet in the source workbook. Names are kept exactly as the workbook writes them."
+      actions={
+        <Link to="/cards/new">
+          <Button variant="primary">Add a card</Button>
+        </Link>
+      }
     >
       <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
         {cards.map((c) => {

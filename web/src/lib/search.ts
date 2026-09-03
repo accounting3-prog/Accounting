@@ -31,6 +31,7 @@ export function searchHaystack(t: Transaction, cardName: string): string {
     t.description,
     t.notes,
     t.review_reason,
+    t.rate_review_note,
     t.source_sheet,
     t.source_row != null ? `row ${t.source_row}` : '',
   ]

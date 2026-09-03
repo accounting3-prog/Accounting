@@ -12,6 +12,7 @@ import {
   labelClass,
 } from '../components/ui';
 import { formatCount, formatDateShort, formatRate } from '../lib/format';
+import { exportCsv, exportFilename, exportXlsx } from '../lib/export';
 import { getCards, getTransactions } from '../lib/ledger';
 import {
   EMPTY_FILTERS,
@@ -82,6 +83,7 @@ export function Transactions() {
   const [visible, setVisible] = useState(PAGE_SIZE);
   const [selected, setSelected] = useState<Transaction | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [exported, setExported] = useState<string | null>(null);
 
   const currencyOptions = useMemo(() => {
     const set = new Set<string>();
@@ -99,6 +101,7 @@ export function Transactions() {
   const update = (patch: Partial<Filters>) => {
     setFilters((f) => ({ ...f, ...patch }));
     setVisible(PAGE_SIZE);
+    setExported(null);
   };
 
   const onSort = (key: SortKey) => {
@@ -147,7 +150,32 @@ export function Transactions() {
           )}{' '}
           rows
         </div>
+        {/* Exports exactly what is on screen — the filtered, sorted result set. */}
+        <div className="flex items-center gap-1.5">
+          <Button
+            disabled={results.length === 0}
+            onClick={() => setExported(exportCsv(results, cards, filters.query, filters))}
+            title={`Download ${exportFilename(filters.query, filters, cards, 'csv')}`}
+          >
+            Export CSV
+          </Button>
+          <Button
+            disabled={results.length === 0}
+            onClick={() => setExported(exportXlsx(results, cards, filters.query, filters))}
+            title={`Download ${exportFilename(filters.query, filters, cards, 'xlsx')}`}
+          >
+            Export Excel
+          </Button>
+        </div>
       </div>
+
+      {exported && (
+        <p className="mb-3 text-[13px] text-ink-muted">
+          Downloaded <span className="font-medium text-ink">{exported}</span> —{' '}
+          {formatCount(results.length)} transaction{results.length === 1 ? '' : 's'}, exactly
+          as filtered here.
+        </p>
+      )}
 
       {showFilters && (
         <div className="mb-4 rounded-md border border-line bg-surface px-4 py-3.5">

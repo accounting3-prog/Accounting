@@ -158,6 +158,11 @@ export async function loadLedger(
       exchange_rate:
         t.exchange_rate === null ? undefined : num(t.exchange_rate as string),
       exchange_rate_formula: (t.exchange_rate_formula as string) ?? undefined,
+      normalized_exchange_rate:
+        t.normalized_exchange_rate === null
+          ? undefined
+          : num(t.normalized_exchange_rate as string),
+      rate_review_note: (t.rate_review_note as string) ?? undefined,
       occurrence: (t.occurrence as number) ?? 1,
       req_number: (t.req_number as string) ?? undefined,
       lpo_number: (t.lpo_number as string) ?? undefined,
@@ -239,6 +244,38 @@ export interface NewTransaction {
  * from the transaction kind, recomputes the dedup key, and refuses any caller
  * who is not a named admin. The client never inserts into `transactions`.
  */
+export interface NewCard {
+  p_name: string;
+  p_opening_balance: number;
+  p_opening_date: string;
+  p_card_type: string;
+  p_status: string;
+  p_settlement_currency: string;
+  p_bank_issuer?: string | null;
+  p_account_reference?: string | null;
+  p_credit_limit?: number | null;
+  p_notes?: string | null;
+}
+
+/**
+ * Creates a card through the database function, which enforces the unique name,
+ * the required opening date and admin-only access, and writes the immutable
+ * card_audit row. The client never inserts into `cards`.
+ */
+export async function createCard(
+  input: NewCard,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  if (!supabase) {
+    return {
+      ok: false,
+      error: 'Not connected to Supabase. Creating a card is unavailable in sample mode.',
+    };
+  }
+  const { data, error } = await supabase.rpc('create_card', input);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, id: String(data) };
+}
+
 export async function submitTransaction(
   input: NewTransaction,
 ): Promise<{ ok: true; id: string } | { ok: false; error: string }> {

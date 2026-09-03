@@ -26,7 +26,8 @@ function ExceptionNotices() {
             <strong>FLYNAS RIYADH</strong> (row 5) carries a date, supplier,
             <span className="whitespace-nowrap"> SAR 8,925.77</span> and an AED
             amount, but the sheet gave it no balance formula — so the workbook's
-            own total excludes it.
+            own total excludes it. It <strong>does</strong> count in the official
+            live balance below, deducted exactly once.
           </p>
           <dl className="mt-2.5 space-y-1 text-[13px]">
             <div className="flex justify-between gap-4">
@@ -38,7 +39,7 @@ function ExceptionNotices() {
               <dd><Money amount={-8745.78} signed tone="ledger" /></dd>
             </div>
             <div className="flex justify-between gap-4 border-t border-[#eecac6] pt-1">
-              <dt className="font-medium text-ink">Ledger balance including FLYNAS</dt>
+              <dt className="font-medium text-ink">Official live ledger balance</dt>
               <dd className="font-semibold"><Money amount={amex.ledgerBalance} /></dd>
             </div>
           </dl>

@@ -173,6 +173,56 @@ try {
     1718.02,
   );
 
+  console.log('\nAMEX 3024 — THE ARITHMETIC, AND THE FIGURE THAT MUST NEVER APPEAR');
+  console.log('-'.repeat(94));
+  const SOURCE_CHAIN = 25474.74;
+  const FLYNAS_AMOUNT = -8745.78;
+  const OFFICIAL = 16728.96;
+  const FORBIDDEN = 7983.18; // FLYNAS deducted a second time
+
+  check(
+    '25,474.74 - 8,745.78 = 16,728.96',
+    Number((SOURCE_CHAIN + FLYNAS_AMOUNT).toFixed(2)),
+    OFFICIAL,
+  );
+  check('official live ledger balance is that figure', Number(amex.ledger_balance), OFFICIAL);
+  check(
+    'FLYNAS is applied exactly once, not twice',
+    Number(amex.source_balance) + FLYNAS_AMOUNT,
+    Number(amex.ledger_balance),
+  );
+
+  // Every balance figure the system can produce, from every surface, scanned
+  // for the double deduction. 7,983.18 appearing anywhere would mean FLYNAS had
+  // been subtracted from a total that already excluded it.
+  const everyFigure = await q(
+    client,
+    `select 'card_balances.source' as src, source_balance as v from card_balances
+     union all select 'card_balances.ledger',      ledger_balance            from card_balances
+     union all select 'card_balances.difference',  reconciliation_difference from card_balances
+     union all select 'card_balances.opening',     opening_balance           from card_balances
+     union all select 'card_balances.spend',       total_spend               from card_balances
+     union all select 'card_balances.funding',     total_funding             from card_balances
+     union all select 'card_balances.adjustments', review_adjustments_total  from card_balances
+     union all select 'transactions.amount_aed',   amount_aed                from transactions
+     union all select 'cards.opening_balance',     opening_balance           from cards`,
+  );
+  const hits = everyFigure.filter((r) => near(r.v, FORBIDDEN));
+  check(
+    `7,983.18 appears in no figure anywhere (${everyFigure.length} scanned)`,
+    hits.length,
+    0,
+    hits.map((h) => h.src).join(', '),
+  );
+
+  const [{ n: flynasCount }] = await q(
+    client,
+    `select count(*)::int n from transactions
+      where supplier_raw ilike 'FLYNAS%'
+        and card_id = (select id from cards where name = 'AMEX 3024 (3016- COR)')`,
+  );
+  check('FLYNAS exists once on AMEX 3024', flynasCount, 1);
+
   console.log('\nSTRUCTURAL INVARIANTS');
   console.log('-'.repeat(94));
 

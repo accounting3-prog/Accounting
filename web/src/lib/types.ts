@@ -84,9 +84,17 @@ export interface Transaction {
   original_amount?: number;
   /** 'TRY  934000.00' as written in the sheet. */
   currency_raw?: string;
-  /** AED per one unit of `currency`, as the sheet computed it. */
+  /** AED per one unit of `currency`, as the sheet computed it. Kept for audit. */
   exchange_rate?: number;
   exchange_rate_formula?: string;
+  /**
+   * AED settlement divided by the original amount: the rate the transaction
+   * actually settled at. Derived, never entered. Use this for reporting; use
+   * `exchange_rate` only when showing what the workbook said.
+   */
+  normalized_exchange_rate?: number;
+  /** Visible explanation when the source rate could not be used as-is. */
+  rate_review_note?: string;
 
   occurrence?: number;
 

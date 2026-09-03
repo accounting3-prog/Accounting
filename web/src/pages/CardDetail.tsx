@@ -198,7 +198,7 @@ export function CardDetail() {
           hint="What the sheet's own formula chain produces"
         />
         <Stat
-          label="Live ledger balance"
+          label="Official live balance"
           value={<Money amount={card.ledgerBalance} code={false} />}
           hint="Real transactions only, computed on read"
         />
