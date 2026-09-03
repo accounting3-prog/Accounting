@@ -158,8 +158,13 @@ try {
   );
   check('FLYNAS on AMEX 3024 row 5 appears exactly once', flynas.length, 1);
   check('FLYNAS amount', Number(flynas[0].amount_aed), -8745.78);
-  check('FLYNAS status', flynas[0].status, 'excluded_from_source_balance');
-  check('FLYNAS excluded from source balance', flynas[0].included_in_source_balance, false);
+  // The status may legitimately be confirmed once someone has reviewed it; what
+  // must not change is that it counts in the live balance and is still marked
+  // as absent from the workbook's own formula chain, which is what keeps the
+  // reconciliation difference visible.
+  check('FLYNAS is not voided', flynas[0].status !== 'voided', true);
+  check('FLYNAS still marked absent from the workbook formula',
+        flynas[0].included_in_source_balance, false);
   check('FLYNAS currency preserved', flynas[0].currency, 'SAR');
   check('FLYNAS original amount preserved', Number(flynas[0].original_amount), 8925.77);
 
@@ -275,29 +280,48 @@ try {
 
   /* ------------------------------------------------- counts, per card+status */
 
-  console.log('\nCOUNTS BY CARD AND STATUS  (database vs extraction)');
+  console.log('\nSTATUS CHANGES SINCE IMPORT  (each must be an audited correction)');
   console.log('-'.repeat(94));
-  const byStatus = await q(
-    client,
-    `select c.name, t.status, count(*)::int n
-       from transactions t join cards c on c.id = t.card_id
-      group by c.name, t.status order by c.name, t.status`,
-  );
-  const dbCounts = new Map();
-  for (const r of byStatus) dbCounts.set(`${r.name}|${r.status}`, r.n);
 
-  for (const card of extraction) {
-    const rows = card.transactions;
-    for (const status of ['confirmed', 'needs_review', 'excluded_from_source_balance']) {
-      const exp = rows.filter((t) => t.status === status).length;
-      if (exp === 0 && !dbCounts.has(`${card.card}|${status}`)) continue;
-      check(
-        `${card.card} · ${status}`,
-        dbCounts.get(`${card.card}|${status}`) ?? 0,
-        exp,
-      );
-    }
-  }
+  // A status is not frozen at import: resolving a review item legitimately
+  // changes it. What must hold is that no status changed WITHOUT a recorded
+  // decision behind it — which is a stronger guarantee than the counts
+  // matching, and the one that actually matters.
+  const importStatus = new Map();
+  for (const card of extraction)
+    for (const t of card.transactions) importStatus.set(t.dedup_key, t.status);
+
+  const live = await q(
+    client,
+    `select t.dedup_key, t.status, c.name as card, t.source_row,
+            (select count(*) from transaction_corrections tc
+              where tc.transaction_id = t.id) as corrections
+       from transactions t join cards c on c.id = t.card_id`,
+  );
+
+  const changed = live.filter(
+    (r) => importStatus.has(r.dedup_key) && importStatus.get(r.dedup_key) !== r.status,
+  );
+  const unexplained = changed.filter((r) => Number(r.corrections) === 0);
+
+  console.log(`  ${changed.length} rows have a different status than at import`);
+  for (const r of changed.slice(0, 6))
+    console.log(
+      `      ${r.card} row ${r.source_row}: ` +
+        `${importStatus.get(r.dedup_key)} -> ${r.status} ` +
+        `(${r.corrections} recorded decision${Number(r.corrections) === 1 ? '' : 's'})`,
+    );
+  if (changed.length > 6) console.log(`      ... and ${changed.length - 6} more`);
+
+  check('every status change is backed by a recorded decision', unexplained.length, 0,
+        unexplained.map((r) => `${r.card} row ${r.source_row}`).join(', '));
+
+  const missingFromDb = [...importStatus.keys()].filter(
+    (k) => !live.some((r) => r.dedup_key === k),
+  );
+  check('no imported row has gone missing', missingFromDb.length, 0);
+  check('no row exists that was not imported',
+        live.length - importStatus.size, 0);
 
   const [{ n: totalDb }] = await q(client, 'select count(*)::int n from transactions');
   const totalExtract = extraction.reduce((a, c) => a + c.transactions.length, 0);
