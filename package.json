@@ -1,0 +1,15 @@
+{
+  "name": "card-ledger",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "db:test": "node scripts/db/run_schema.mjs",
+    "import:dry": "node scripts/db/import.mjs --dry-run",
+    "test:sim": "node tests/simulate.mjs",
+    "test:restore": "node tests/restore.mjs"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.8"
+  }
+}
