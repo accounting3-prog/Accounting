@@ -244,6 +244,33 @@ export interface NewTransaction {
  * from the transaction kind, recomputes the dedup key, and refuses any caller
  * who is not a named admin. The client never inserts into `transactions`.
  */
+export type ResolveAction = 'confirm' | 'void' | 'leave_pending' | 'reopen';
+
+/**
+ * Resolves a review item through the database function, which requires a
+ * stated reason, records the decision in transaction_corrections, refuses any
+ * caller who is not a named admin, and never deletes the row.
+ */
+export async function resolveReviewItem(
+  transactionId: string,
+  action: ResolveAction,
+  rationale: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!supabase) {
+    return {
+      ok: false,
+      error: 'Not connected to Supabase. Resolving is unavailable in sample mode.',
+    };
+  }
+  const { error } = await supabase.rpc('resolve_review_item', {
+    p_transaction_id: transactionId,
+    p_action: action,
+    p_rationale: rationale,
+  });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
 export interface NewCard {
   p_name: string;
   p_opening_balance: number;

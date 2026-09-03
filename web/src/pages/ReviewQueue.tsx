@@ -2,41 +2,62 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Page } from '../components/Layout';
 import { TransactionDrawer } from '../components/TransactionDrawer';
-import { Button, EmptyState, Money, Panel, StatusPill, Tag } from '../components/ui';
+import { Button, EmptyState, Money, Notice, Panel, StatusPill, Tag } from '../components/ui';
+import { ResolveDialog, type ResolveRequest } from '../components/ResolveDialog';
+import { useLedgerState } from '../components/LedgerProvider';
+import type { ResolveAction } from '../lib/api';
 import { formatDate } from '../lib/format';
 import { REVIEW_KIND_LABEL, getCards, getReviewItems } from '../lib/ledger';
 import type { ReviewKind, Transaction } from '../lib/types';
 
-/** What resolving an item would mean, stated plainly before it is done. */
-const ACTIONS: Record<ReviewKind, string[]> = {
+/**
+ * What resolving an item does, wired to the action the database understands.
+ *
+ * Every label maps to a real operation. A button that cannot do what it says
+ * has no business being on screen — an earlier version of this page rendered
+ * these as decoration, which is worse than not offering them at all.
+ */
+interface ActionSpec {
+  label: string;
+  action: ResolveAction;
+}
+
+const ACTIONS: Record<ReviewKind, ActionSpec[]> = {
   currency_unreadable: [
-    'Confirm the currency and original amount',
-    'Leave pending review',
+    { label: 'Confirm the figures as recorded', action: 'confirm' },
+    { label: 'Mark as voided', action: 'void' },
+    { label: 'Leave pending review', action: 'leave_pending' },
   ],
   rate_mismatch: [
-    'Confirm which figure is right',
-    'Leave pending review',
+    { label: 'Accept the settled rate', action: 'confirm' },
+    { label: 'Leave pending review', action: 'leave_pending' },
   ],
   rate_without_currency: [
-    'Confirm the currency this was charged in',
-    'Leave pending review',
+    { label: 'Confirm the figures as recorded', action: 'confirm' },
+    { label: 'Leave pending review', action: 'leave_pending' },
   ],
   rate_hardcoded: [
-    'Record the original amount',
-    'Leave pending review',
+    { label: 'Accept the settled rate', action: 'confirm' },
+    { label: 'Leave pending review', action: 'leave_pending' },
   ],
   manual_balance_adjustment: [
-    'Link the underlying transaction',
-    'Confirm as a real adjustment',
-    'Leave pending review',
+    { label: 'Confirm as a real adjustment', action: 'confirm' },
+    { label: 'Mark as voided', action: 'void' },
+    { label: 'Leave pending review', action: 'leave_pending' },
   ],
   excluded_from_source_balance: [
-    'Confirm as completed and include in the balance',
-    'Mark as voided',
-    'Leave pending review',
+    { label: 'Confirm as completed and include in the balance', action: 'confirm' },
+    { label: 'Mark as voided', action: 'void' },
+    { label: 'Leave pending review', action: 'leave_pending' },
   ],
-  duplicate_candidate: ['Keep both', 'Mark one as voided'],
-  other: ['Confirm', 'Leave pending review'],
+  duplicate_candidate: [
+    { label: 'Keep both', action: 'confirm' },
+    { label: 'Mark this one voided', action: 'void' },
+  ],
+  other: [
+    { label: 'Confirm', action: 'confirm' },
+    { label: 'Leave pending review', action: 'leave_pending' },
+  ],
 };
 
 export function ReviewQueue() {
@@ -44,6 +65,12 @@ export function ReviewQueue() {
   const items = getReviewItems();
   const [kindFilter, setKindFilter] = useState<ReviewKind | 'all'>('all');
   const [selected, setSelected] = useState<Transaction | null>(null);
+  const [resolving, setResolving] = useState<ResolveRequest | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const { reload, signedIn, source } = useLedgerState();
+  // Resolving writes to the ledger, so it needs a real session — not just a
+  // page that renders.
+  const canResolve = signedIn && source === 'supabase';
 
   const counts = useMemo(() => {
     const c = new Map<ReviewKind, number>();
@@ -65,6 +92,24 @@ export function ReviewQueue() {
       title="Review queue"
       description="Rows the import refused to interpret, and the two places where the workbook and its own arithmetic disagree. Everything here was imported in full and flagged — nothing was dropped, merged or corrected."
     >
+      {!canResolve && (
+        <div className="mb-4">
+          <Notice tone="review" title="Resolving needs an admin session">
+            Every flagged row is readable here, but changing one writes to the
+            ledger, so it needs a signed-in admin account.
+          </Notice>
+        </div>
+      )}
+
+      {done && (
+        <div className="mb-4">
+          <Notice tone="accent" title="Recorded">
+            {done} The decision is stored against the transaction with your name
+            and the time, and the balances have been refreshed.
+          </Notice>
+        </div>
+      )}
+
       {items.length === 0 ? (
         <Panel>
           <EmptyState
@@ -158,9 +203,25 @@ export function ReviewQueue() {
                     )}
 
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {ACTIONS[kind].map((label, i) => (
-                        <Button key={label} variant={i === 0 ? 'primary' : 'secondary'}>
-                          {label}
+                      {ACTIONS[kind].map((spec, i) => (
+                        <Button
+                          key={spec.label}
+                          variant={
+                            spec.action === 'void'
+                              ? 'danger'
+                              : i === 0
+                                ? 'primary'
+                                : 'secondary'
+                          }
+                          disabled={!canResolve}
+                          title={
+                            canResolve
+                              ? undefined
+                              : 'Sign in as an admin to resolve review items'
+                          }
+                          onClick={() => setResolving({ transaction: t, card, ...spec })}
+                        >
+                          {spec.label}
                         </Button>
                       ))}
                       <Button variant="ghost" onClick={() => setSelected(t)}>
@@ -248,7 +309,20 @@ export function ReviewQueue() {
                         <td className="px-4 py-2.5">
                           <StatusPill status={t.status} />
                         </td>
-                        <td className="px-4 py-2.5 text-right">
+                        <td className="whitespace-nowrap px-4 py-2.5 text-right">
+                          <Button
+                            disabled={!canResolve}
+                            title={
+                              canResolve
+                                ? undefined
+                                : 'Sign in as an admin to resolve review items'
+                            }
+                            onClick={() =>
+                              setResolving({ transaction: t, card, ...ACTIONS[kind][0] })
+                            }
+                          >
+                            Resolve
+                          </Button>
                           <Button variant="ghost" onClick={() => setSelected(t)}>
                             Open
                           </Button>
@@ -267,6 +341,15 @@ export function ReviewQueue() {
         transaction={selected}
         card={cards.find((c) => c.id === selected?.cardId)}
         onClose={() => setSelected(null)}
+      />
+
+      <ResolveDialog
+        request={resolving}
+        onClose={() => setResolving(null)}
+        onDone={() => {
+          setDone(resolving ? `${resolving.label} — applied.` : 'Applied.');
+          reload();
+        }}
       />
     </Page>
   );
