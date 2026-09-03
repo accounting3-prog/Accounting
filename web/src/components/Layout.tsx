@@ -9,6 +9,7 @@ const NAV = [
   { to: '/review', label: 'Review queue', badge: true },
   { to: '/cards', label: 'Cards' },
   { to: '/add', label: 'Add transaction' },
+  { to: '/access', label: 'Access' },
 ];
 
 function NavItems({ onNavigate }: { onNavigate?: () => void }) {

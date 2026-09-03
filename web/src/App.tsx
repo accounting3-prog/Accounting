@@ -9,6 +9,7 @@ import { AddTransaction } from './pages/AddTransaction'
 import { ReviewQueue } from './pages/ReviewQueue'
 import { Cards } from './pages/Cards'
 import { AddCard } from './pages/AddCard'
+import { Access } from './pages/Access'
 import { CardDetail } from './pages/CardDetail'
 
 /** A failed render must never show a half-drawn balance. */
@@ -48,6 +49,7 @@ export function App() {
             <Route path="review" element={<ReviewQueue />} />
             <Route path="cards" element={<Cards />} />
             <Route path="cards/new" element={<AddCard />} />
+            <Route path="access" element={<Access />} />
             <Route path="cards/:id" element={<CardDetail />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

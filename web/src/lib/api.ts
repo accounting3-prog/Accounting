@@ -244,6 +244,74 @@ export interface NewTransaction {
  * from the transaction kind, recomputes the dedup key, and refuses any caller
  * who is not a named admin. The client never inserts into `transactions`.
  */
+/* ------------------------------------------------------------------ access */
+
+export interface AppUser {
+  user_id: string;
+  email: string;
+  is_admin: boolean;
+  created_at: string;
+  last_sign_in: string | null;
+}
+
+export interface AccessAuditRow {
+  id: string;
+  action: 'granted' | 'revoked';
+  target_email: string;
+  performed_by_email: string | null;
+  rationale: string | null;
+  created_at: string;
+}
+
+/** Everyone who has signed in. Admin-only, enforced in the database. */
+export async function listAppUsers(): Promise<
+  { ok: true; users: AppUser[] } | { ok: false; error: string }
+> {
+  if (!supabase) return { ok: false, error: 'Not connected to Supabase.' };
+  const { data, error } = await supabase.rpc('list_app_users');
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, users: (data ?? []) as AppUser[] };
+}
+
+export async function listAccessAudit(): Promise<
+  { ok: true; rows: AccessAuditRow[] } | { ok: false; error: string }
+> {
+  if (!supabase) return { ok: false, error: 'Not connected to Supabase.' };
+  const { data, error } = await supabase
+    .from('admin_audit')
+    .select('id, action, target_email, performed_by_email, rationale, created_at')
+    .order('created_at', { ascending: false })
+    .limit(100);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, rows: (data ?? []) as AccessAuditRow[] };
+}
+
+export async function grantAdmin(
+  email: string,
+  rationale: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not connected to Supabase.' };
+  const { error } = await supabase.rpc('grant_admin', {
+    p_email: email,
+    p_rationale: rationale || null,
+  });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+export async function revokeAdmin(
+  userId: string,
+  rationale: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not connected to Supabase.' };
+  const { error } = await supabase.rpc('revoke_admin', {
+    p_user_id: userId,
+    p_rationale: rationale || null,
+  });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
 export type ResolveAction = 'confirm' | 'void' | 'leave_pending' | 'reopen';
 
 /**
