@@ -1,6 +1,7 @@
 import { Component, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
+import { LedgerProvider } from './components/LedgerProvider'
 import { ErrorState } from './components/ui'
 import { Dashboard } from './pages/Dashboard'
 import { Transactions } from './pages/Transactions'
@@ -37,6 +38,7 @@ export function App() {
   return (
     <Boundary>
       <BrowserRouter>
+        <LedgerProvider>
         <Routes>
           <Route element={<Layout />}>
             <Route index element={<Dashboard />} />
@@ -48,6 +50,7 @@ export function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
+        </LedgerProvider>
       </BrowserRouter>
     </Boundary>
   )

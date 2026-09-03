@@ -113,7 +113,10 @@ create table suppliers (
     name         text not null,
     country_code text check (country_code ~ '^[0-9]{3}$'),
     created_at   timestamptz not null default now(),
-    unique (name, country_code)
+    -- NULLS NOT DISTINCT so two suppliers with no country code collide.
+    -- Postgres otherwise treats NULLs as distinct, which made ON CONFLICT
+    -- miss and duplicated 467 suppliers on every re-import.
+    unique nulls not distinct (name, country_code)
 );
 
 create index suppliers_name_trgm on suppliers using gin (name gin_trgm_ops);

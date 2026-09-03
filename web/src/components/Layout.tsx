@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { getTotals } from '../lib/ledger';
-import { dataSourceLabel, isSupabaseConfigured } from '../lib/supabase';
+import { useDataSourceLabel, useLedgerState } from './LedgerProvider';
 
 const NAV = [
   { to: '/', label: 'Dashboard', end: true },
@@ -44,6 +44,8 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 function SourceBadge() {
+  const { label, live } = useDataSourceLabel();
+  const { reload } = useLedgerState();
   return (
     <div className="border-t border-line px-3 py-3">
       <div className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
@@ -52,19 +54,22 @@ function SourceBadge() {
       <div className="mt-1 flex items-center gap-1.5 text-[13px] text-ink">
         <span
           aria-hidden
-          className={`h-1.5 w-1.5 rounded-full ${
-            isSupabaseConfigured ? 'bg-positive' : 'bg-review'
-          }`}
+          className={`h-1.5 w-1.5 rounded-full ${live ? 'bg-positive' : 'bg-review'}`}
         />
-        {dataSourceLabel()}
+        {label}
       </div>
-      {!isSupabaseConfigured && (
+      {!live && (
         <p className="mt-1 text-[11px] leading-snug text-ink-muted">
-          Figures below are the audited workbook extraction. Set
-          <code className="mx-1 rounded-sm bg-sunken px-1">VITE_SUPABASE_URL</code>
-          to read live data.
+          Figures are the audited workbook extraction, not live data.
         </p>
       )}
+      <button
+        type="button"
+        onClick={reload}
+        className="mt-1.5 text-[11px] text-accent hover:underline underline-offset-2"
+      >
+        Refresh
+      </button>
     </div>
   );
 }

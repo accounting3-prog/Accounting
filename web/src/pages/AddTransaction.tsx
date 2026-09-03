@@ -13,6 +13,8 @@
  */
 
 import { useMemo, useState } from 'react';
+import { submitTransaction } from '../lib/api';
+import { useLedgerState } from '../components/LedgerProvider';
 import { Page } from '../components/Layout';
 import {
   Button,
@@ -127,6 +129,9 @@ export function AddTransaction() {
   const [touched, setTouched] = useState(false);
   const [saved, setSaved] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const { reload, source } = useLedgerState();
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setF((prev) => ({ ...prev, [key]: value }));
@@ -164,12 +169,48 @@ export function AddTransaction() {
     });
   }, [f, amount, effect, direction]);
 
-  const onSubmit = (e: React.FormEvent) => {
+  // Saving goes through create_transaction in the database, never a direct
+  // insert. That function re-derives the sign from the type, recomputes the
+  // dedup key, and refuses any caller who is not a named admin — so the rules
+  // hold even if this form were bypassed entirely.
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setTouched(true);
-    if (hasErrors) return;
-    // Persisting is wired up with the importer; the form itself is complete.
-    setSaved(true);
+    if (hasErrors || submitting) return;
+
+    setSubmitting(true);
+    setSubmitError(null);
+    const result = await submitTransaction({
+      p_card_id: f.cardId,
+      p_txn_date: f.date,
+      p_kind: f.kind,
+      p_amount_aed: Math.abs(Number(f.amountAed)),
+      p_supplier: f.supplier.trim(),
+      p_req_number: f.reqNumber.trim(),
+      p_payment_ref: f.paymentRef.trim(),
+      p_currency: f.currency || null,
+      p_original_amount: f.originalAmount ? Number(f.originalAmount) : null,
+      p_exchange_rate: f.exchangeRate ? Number(f.exchangeRate) : null,
+      p_supplier_country: f.supplierCountry.trim() || null,
+      p_crm: f.crm.trim() || null,
+      p_lpo_number: f.lpoNumber.trim() || null,
+      p_invoice: f.invoice.trim() || null,
+      p_client: f.client.trim() || null,
+      p_sales_operation: f.salesOperation.trim() || null,
+      p_description: f.description.trim() || null,
+      p_notes: f.notes.trim() || null,
+      p_needs_review: f.needsReview,
+    });
+    setSubmitting(false);
+
+    if (result.ok) {
+      setSaved(true);
+      setF(BLANK);
+      setTouched(false);
+      reload();
+    } else {
+      setSubmitError(result.error);
+    }
   };
 
   const err = (k: keyof FormState) => (touched ? errors[k] : undefined);
@@ -537,17 +578,33 @@ export function AddTransaction() {
             </Notice>
           )}
 
+          {submitError && (
+            <Notice tone="negative" title="The database refused this entry">
+              <p>{submitError}</p>
+              <p className="mt-1.5 text-ink-muted">
+                Nothing was written. The rules are enforced in the database, so
+                this is the same answer any client would get.
+              </p>
+            </Notice>
+          )}
+
           {saved && (
-            <Notice tone="accent" title="Ready to save">
-              This entry passes every validation rule. Writing to the ledger is
-              enabled once the importer is connected to Supabase — the record is
-              held as a draft meanwhile.
+            <Notice tone="accent" title="Saved to the ledger">
+              The transaction was written through the audited server-side path
+              and the balances above have been refreshed.
+            </Notice>
+          )}
+
+          {source === 'sample' && (
+            <Notice tone="review" title="Not connected to the live ledger">
+              The form validates in full, but saving needs a Supabase connection.
+              Use “Save draft” to keep this entry meanwhile.
             </Notice>
           )}
 
           <div className="flex flex-wrap gap-2">
-            <Button type="submit" variant="primary">
-              Save transaction
+            <Button type="submit" variant="primary" disabled={submitting}>
+              {submitting ? 'Saving…' : 'Save transaction'}
             </Button>
             <Button
               type="button"

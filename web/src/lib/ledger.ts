@@ -22,7 +22,21 @@ import type {
   TxnKind,
 } from './types';
 
-const data = sample as unknown as LedgerData;
+/**
+ * The ledger currently on screen.
+ *
+ * Held in one place so the selectors below stay plain synchronous functions and
+ * the pages that call them did not have to change when the data source moved
+ * from a bundled extract to Supabase. LedgerProvider fills this before any page
+ * renders, so a component never reads a half-loaded ledger.
+ *
+ * Seeded with the audited sample so the app is usable with no backend.
+ */
+let data: LedgerData = sample as unknown as LedgerData;
+
+export function setLedgerData(next: LedgerData): void {
+  data = next;
+}
 
 export function getLedger(): LedgerData {
   return data;
