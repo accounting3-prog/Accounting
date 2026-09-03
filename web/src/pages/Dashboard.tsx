@@ -1,91 +1,247 @@
 import { Link } from 'react-router-dom';
 import { Page } from '../components/Layout';
-import { EmptyState, Money, Notice, Panel, Stat, Tag } from '../components/ui';
+import { EmptyState, Money, Panel, Tag } from '../components/ui';
 import { formatCount, formatDate, formatDateShort } from '../lib/format';
 import {
   getCards,
+  getReviewItems,
   getTotals,
   getTransactions,
   spendByCurrencyOverall,
 } from '../lib/ledger';
+import type { Card } from '../lib/types';
 
-/** The two cards whose workbook balance and real ledger disagree. */
-function ExceptionNotices() {
+/**
+ * The headline band.
+ *
+ * One figure dominates — what the accounts are actually worth — because that is
+ * the question the page exists to answer. The workbook's own total and the
+ * difference between them sit beneath as supporting context rather than as
+ * equal peers: they matter, but nobody opens a ledger to read them first.
+ */
+function Headline() {
+  const totals = getTotals();
   const cards = getCards();
-  const amex = cards.find((c) => c.name.startsWith('AMEX 3024'));
-  const rak = cards.find((c) => c.name.startsWith('RAK 9825'));
+  const lastActivity = cards
+    .map((c) => c.lastTransaction)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+  const open = totals.needsReview + totals.excluded;
+  const hasDifference = Math.abs(totals.reconciliationDifference) > 0.005;
 
   return (
-    <div className="grid gap-3 lg:grid-cols-2">
-      {amex && (
-        <Notice
-          tone="negative"
-          title={`${amex.name} — a transaction is missing from the workbook's balance`}
-        >
-          <p>
-            <strong>FLYNAS RIYADH</strong> (row 5) carries a date, supplier,
-            <span className="whitespace-nowrap"> SAR 8,925.77</span> and an AED
-            amount, but the sheet gave it no balance formula — so the workbook's
-            own total excludes it. It <strong>does</strong> count in the official
-            live balance below, deducted exactly once.
-          </p>
-          <dl className="mt-2.5 space-y-1 text-[13px]">
-            <div className="flex justify-between gap-4">
-              <dt className="text-ink-muted">Source workbook balance</dt>
-              <dd><Money amount={amex.sourceBalance} /></dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-ink-muted">FLYNAS, excluded</dt>
-              <dd><Money amount={-8745.78} signed tone="ledger" /></dd>
-            </div>
-            <div className="flex justify-between gap-4 border-t border-[#eecac6] pt-1">
-              <dt className="font-medium text-ink">Official live ledger balance</dt>
-              <dd className="font-semibold"><Money amount={amex.ledgerBalance} /></dd>
-            </div>
-          </dl>
-          <p className="mt-2">
-            <Link to={`/cards/${amex.id}`} className="font-medium text-accent underline underline-offset-2">
-              Review this card
-            </Link>
-          </p>
-        </Notice>
-      )}
+    <section className="rounded-md border border-line bg-surface">
+      <div className="px-5 py-5">
+        <div className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+          Total official live balance
+        </div>
+        <div className="mt-1 flex flex-wrap items-baseline gap-x-2.5">
+          <span className="tnum text-[2rem] leading-none font-semibold tracking-tight text-ink">
+            {totals.liveBalance.toLocaleString('en-US', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
+          </span>
+          <span className="text-sm font-medium text-ink-muted">AED</span>
+        </div>
+        <p className="mt-1.5 text-[13px] text-ink-muted">
+          Across {totals.cardCount} cards · {formatCount(totals.transactionCount)}{' '}
+          transactions · latest activity {formatDate(lastActivity)}
+        </p>
+      </div>
 
-      {rak && (
-        <Notice
-          tone="review"
-          title={`${rak.name} — the balance was manually overwritten`}
-        >
-          <p>
-            At row 26 the running balance was typed over instead of carried by
-            formula, leaving <strong>1,718.02 AED</strong> in the workbook's
-            total with no transaction behind it. It is held as a labelled
-            adjustment, not folded into spend or funding.
-          </p>
-          <dl className="mt-2.5 space-y-1 text-[13px]">
-            <div className="flex justify-between gap-4">
-              <dt className="text-ink-muted">Source workbook balance</dt>
-              <dd><Money amount={rak.sourceBalance} /></dd>
+      <div className="grid grid-cols-2 border-t border-line md:grid-cols-4 md:divide-x md:divide-line">
+        <div className="border-r border-line px-5 py-3 md:border-r-0">
+          <div className="text-[11px] uppercase tracking-wide text-ink-faint">
+            Source workbook
+          </div>
+          <div className="mt-0.5 text-[15px] font-medium text-ink-muted">
+            <Money amount={totals.sourceBalance} code={false} />
+          </div>
+        </div>
+        <div className="px-5 py-3">
+          <div className="text-[11px] uppercase tracking-wide text-ink-faint">
+            Reconciliation difference
+          </div>
+          <div
+            className={`mt-0.5 text-[15px] font-medium ${
+              hasDifference ? 'text-negative' : 'text-ink-muted'
+            }`}
+          >
+            <Money amount={totals.reconciliationDifference} code={false} />
+          </div>
+        </div>
+        <div className="border-t border-r border-line px-5 py-3 md:border-t-0 md:border-r-0">
+          <div className="text-[11px] uppercase tracking-wide text-ink-faint">
+            Needs review
+          </div>
+          <div className="mt-0.5 text-[15px] font-medium">
+            {open > 0 ? (
+              <Link
+                to="/review"
+                className="tnum text-review hover:underline underline-offset-2"
+              >
+                {open} {open === 1 ? 'item' : 'items'}
+              </Link>
+            ) : (
+              <span className="text-ink-muted">All clear</span>
+            )}
+          </div>
+        </div>
+        <div className="border-t border-line px-5 py-3 md:border-t-0">
+          <div className="text-[11px] uppercase tracking-wide text-ink-faint">
+            Cards with a difference
+          </div>
+          <div className="tnum mt-0.5 text-[15px] font-medium text-ink-muted">
+            {totals.cardsWithDifference.length} of {totals.cardCount}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * One row per card whose figures need explaining.
+ *
+ * Driven by the card's actual state, not hardcoded. A card with open review
+ * items is flagged; a card whose difference has been reviewed and accepted is
+ * shown quietly as reconciled, because the difference itself does not go away —
+ * the workbook's formula genuinely still skips that row — but it is no longer
+ * something anyone has to act on. A card with neither is not listed at all.
+ */
+function attentionState(card: Card, openOnCard: number) {
+  const hasDifference = Math.abs(card.reconciliationDifference) > 0.005;
+  if (!hasDifference && openOnCard === 0) return null;
+  return openOnCard > 0 ? 'open' : 'accepted';
+}
+
+function Attention() {
+  const cards = getCards();
+  const reviewItems = getReviewItems();
+
+  const rows = cards
+    .map((card) => {
+      const openOnCard = reviewItems.filter((r) => r.card?.id === card.id).length;
+      const state = attentionState(card, openOnCard);
+      return state ? { card, openOnCard, state } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null)
+    // Anything still open comes first.
+    .sort((a, b) => (a.state === b.state ? 0 : a.state === 'open' ? -1 : 1));
+
+  if (rows.length === 0) {
+    return (
+      <Panel title="Reconciliation">
+        <EmptyState
+          title="Every card agrees with the workbook"
+          description="No differences and nothing awaiting review."
+        />
+      </Panel>
+    );
+  }
+
+  const openCount = rows.filter((r) => r.state === 'open').length;
+
+  return (
+    <Panel
+      title="Reconciliation"
+      description={
+        openCount > 0
+          ? `${openCount} card${openCount === 1 ? "" : "s"} still ${openCount === 1 ? "needs" : "need"} attention. The rest have been reviewed and their difference explained.`
+          : 'Every difference below has been reviewed and accepted. The figures stay visible because the workbook and the ledger genuinely differ.'
+      }
+    >
+      <ul className="divide-y divide-line">
+        {rows.map(({ card, openOnCard, state }) => (
+          <li key={card.id} className="px-4 py-3.5">
+            <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link
+                    to={`/cards/${card.id}`}
+                    className="text-[13px] font-semibold text-ink hover:text-accent hover:underline underline-offset-2"
+                  >
+                    {card.name}
+                  </Link>
+                  {state === 'open' ? (
+                    <Tag tone="review">
+                      {openOnCard} awaiting review
+                    </Tag>
+                  ) : (
+                    <Tag>Reviewed · difference explained</Tag>
+                  )}
+                </div>
+                <p className="mt-1 max-w-2xl text-[13px] text-ink-muted">
+                  {card.excluded > 0 || card.reviewAdjustmentsTotal === 0 ? (
+                    <>
+                      The workbook's own running-balance formula skips a
+                      transaction that the ledger counts, so the two totals differ
+                      by{' '}
+                      <span className="font-medium text-ink">
+                        <Money amount={Math.abs(card.reconciliationDifference)} />
+                      </span>
+                      . The official live balance below includes it, deducted
+                      exactly once.
+                    </>
+                  ) : (
+                    <>
+                      The workbook's balance carries{' '}
+                      <span className="font-medium text-ink">
+                        <Money amount={Math.abs(card.reviewAdjustmentsTotal)} />
+                      </span>{' '}
+                      with no transaction behind it, from a balance typed over the
+                      formula. It is held apart from spend and funding until the
+                      real transaction is found.
+                    </>
+                  )}
+                  {state === 'open' && (
+                    <>
+                      {' '}
+                      <Link
+                        to="/review"
+                        className="font-medium text-accent hover:underline underline-offset-2"
+                      >
+                        Review
+                      </Link>
+                    </>
+                  )}
+                </p>
+              </div>
+
+              <dl className="tnum shrink-0 space-y-0.5 text-[13px]">
+                <div className="flex justify-between gap-6">
+                  <dt className="text-ink-muted">Source workbook</dt>
+                  <dd><Money amount={card.sourceBalance} code={false} /></dd>
+                </div>
+                <div className="flex justify-between gap-6">
+                  <dt className="text-ink-muted">
+                    {card.reviewAdjustmentsTotal !== 0 ? 'Unconfirmed adjustment' : 'Difference'}
+                  </dt>
+                  <dd>
+                    <Money
+                      amount={
+                        card.reviewAdjustmentsTotal !== 0
+                          ? card.reviewAdjustmentsTotal
+                          : -Math.abs(card.reconciliationDifference)
+                      }
+                      signed
+                      tone="ledger"
+                      code={false}
+                    />
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-6 border-t border-line pt-0.5 font-semibold">
+                  <dt>Official live</dt>
+                  <dd><Money amount={card.ledgerBalance} code={false} /></dd>
+                </div>
+              </dl>
             </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-ink-muted">Ledger, without the adjustment</dt>
-              <dd><Money amount={rak.ledgerBalance} /></dd>
-            </div>
-            <div className="flex justify-between gap-4 border-t border-[#e8d5ab] pt-1">
-              <dt className="font-medium text-ink">Unconfirmed review adjustment</dt>
-              <dd className="font-semibold">
-                <Money amount={rak.reviewAdjustmentsTotal} signed tone="ledger" />
-              </dd>
-            </div>
-          </dl>
-          <p className="mt-2">
-            <Link to="/review" className="font-medium text-accent underline underline-offset-2">
-              Open the review queue
-            </Link>
-          </p>
-        </Notice>
-      )}
-    </div>
+          </li>
+        ))}
+      </ul>
+    </Panel>
   );
 }
 
@@ -95,53 +251,24 @@ export function Dashboard() {
   const recent = [...getTransactions()]
     .filter((t) => t.txn_date)
     .sort((a, b) => (b.txn_date ?? '').localeCompare(a.txn_date ?? ''))
-    .slice(0, 12);
+    .slice(0, 10);
   const currencies = spendByCurrencyOverall();
 
   return (
     <Page
       title="Dashboard"
-      description="Every balance is computed live from the ledger. The workbook's own figure is shown beside it, and any difference between the two is stated rather than reconciled away."
+      description="Every balance is computed live from the ledger. The workbook's own figure sits beside it, and any difference between the two is stated rather than reconciled away."
     >
-      {/* Headline figures */}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat
-          label="Live ledger balance"
-          value={<Money amount={totals.liveBalance} />}
-          hint={`Across ${totals.cardCount} cards, all settling in AED`}
-        />
-        <Stat
-          label="Cards"
-          value={<span className="tnum">{totals.cardCount}</span>}
-          hint={`${formatCount(totals.transactionCount)} transactions imported`}
-        />
-        <Stat
-          label="Needs review"
-          value={<span className="tnum">{totals.needsReview + totals.excluded}</span>}
-          tone={totals.needsReview + totals.excluded > 0 ? 'review' : 'plain'}
-          hint={
-            <Link to="/review" className="text-accent underline underline-offset-2">
-              Open the review queue
-            </Link>
-          }
-        />
-        <Stat
-          label="Reconciliation difference"
-          value={<Money amount={totals.reconciliationDifference} />}
-          tone={Math.abs(totals.reconciliationDifference) > 0.005 ? 'negative' : 'plain'}
-          hint={`${totals.cardsWithDifference.length} of ${totals.cardCount} cards disagree with the workbook`}
-        />
-      </div>
+      <Headline />
 
       <div className="mt-5">
-        <ExceptionNotices />
+        <Attention />
       </div>
 
-      {/* Card balances */}
       <div className="mt-5">
         <Panel
           title="Card balances"
-          description="Source is what the workbook shows. Ledger is the real transactions. A non-zero difference is a discrepancy that has not been resolved yet."
+          description="Source is what the workbook shows. Official live is the real transactions."
         >
           <div className="scroll-x">
             <table className="w-full min-w-[900px] border-collapse text-[13px]">
@@ -149,7 +276,7 @@ export function Dashboard() {
                 <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-ink-faint">
                   <th className="px-4 py-2 font-medium">Card</th>
                   <th className="px-4 py-2 text-right font-medium">Source workbook</th>
-                  <th className="px-4 py-2 text-right font-medium">Live ledger</th>
+                  <th className="px-4 py-2 text-right font-medium">Official live</th>
                   <th className="px-4 py-2 text-right font-medium">Difference</th>
                   <th className="px-4 py-2 text-right font-medium">Last activity</th>
                   <th className="px-4 py-2 font-medium">Status</th>
@@ -172,32 +299,28 @@ export function Dashboard() {
                           {formatDate(c.openingDate)}
                         </div>
                       </td>
-                      <td className="px-4 py-2.5 text-right">
+                      <td className="px-4 py-2.5 text-right text-ink-muted">
                         <Money amount={c.sourceBalance} code={false} />
                       </td>
-                      <td className="px-4 py-2.5 text-right font-medium">
+                      <td className="px-4 py-2.5 text-right text-[14px] font-semibold">
                         <Money amount={c.ledgerBalance} code={false} />
                       </td>
                       <td className="px-4 py-2.5 text-right">
                         {diff ? (
-                          <span className="tnum font-medium text-negative">
+                          <span className="font-medium text-negative">
                             <Money amount={c.reconciliationDifference} code={false} />
                           </span>
                         ) : (
                           <span className="text-ink-faint">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-2.5 text-right text-ink-muted">
+                      <td className="whitespace-nowrap px-4 py-2.5 text-right text-ink-muted">
                         {formatDateShort(c.lastTransaction)}
                       </td>
                       <td className="px-4 py-2.5">
                         <div className="flex flex-wrap gap-1">
-                          {c.needsReview > 0 && (
-                            <Tag tone="review">{c.needsReview} to review</Tag>
-                          )}
-                          {c.excluded > 0 && (
-                            <Tag tone="negative">{c.excluded} excluded</Tag>
-                          )}
+                          {c.needsReview > 0 && <Tag tone="review">{c.needsReview} to review</Tag>}
+                          {c.excluded > 0 && <Tag tone="negative">{c.excluded} excluded</Tag>}
                           {c.needsReview === 0 && c.excluded === 0 && (
                             <span className="text-xs text-ink-faint">Clear</span>
                           )}
@@ -208,12 +331,12 @@ export function Dashboard() {
                 })}
               </tbody>
               <tfoot>
-                <tr className="border-t border-line-strong bg-sunken font-medium">
+                <tr className="border-t-2 border-line-strong bg-sunken font-medium">
                   <td className="px-4 py-2.5">Total, AED</td>
-                  <td className="px-4 py-2.5 text-right">
+                  <td className="px-4 py-2.5 text-right text-ink-muted">
                     <Money amount={totals.sourceBalance} code={false} />
                   </td>
-                  <td className="px-4 py-2.5 text-right">
+                  <td className="px-4 py-2.5 text-right text-[14px] font-semibold">
                     <Money amount={totals.liveBalance} code={false} />
                   </td>
                   <td className="px-4 py-2.5 text-right text-negative">
@@ -228,7 +351,6 @@ export function Dashboard() {
       </div>
 
       <div className="mt-5 grid gap-5 xl:grid-cols-[1.35fr_1fr]">
-        {/* Recent transactions */}
         <Panel
           title="Recent transactions"
           action={
@@ -244,7 +366,7 @@ export function Dashboard() {
             <EmptyState title="No transactions yet" />
           ) : (
             <div className="scroll-x">
-              <table className="w-full min-w-[640px] border-collapse text-[13px]">
+              <table className="w-full min-w-[620px] border-collapse text-[13px]">
                 <thead>
                   <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-ink-faint">
                     <th className="px-4 py-2 font-medium">Date</th>
@@ -264,12 +386,10 @@ export function Dashboard() {
                         <td className="max-w-[220px] truncate px-4 py-2">
                           {t.supplier ?? t.description ?? '—'}
                           {t.currency && t.currency !== 'AED' && (
-                            <span className="ml-1.5 text-xs text-ink-faint">
-                              {t.currency}
-                            </span>
+                            <span className="ml-1.5 text-xs text-ink-faint">{t.currency}</span>
                           )}
                         </td>
-                        <td className="max-w-[180px] truncate px-4 py-2 text-ink-muted">
+                        <td className="max-w-[170px] truncate px-4 py-2 text-ink-muted">
                           {card?.name}
                         </td>
                         <td className="px-4 py-2 text-right">
@@ -284,23 +404,22 @@ export function Dashboard() {
           )}
         </Panel>
 
-        {/* Spend by currency — never totalled */}
         <Panel
           title="Spend by original currency"
-          description="One row per currency. These are not added together: a sum across currencies would be a number that looks like money and is not."
+          description="One row per currency, never a total. A sum across currencies would look like money and would not be."
         >
           <div className="scroll-x">
             <table className="w-full min-w-[420px] border-collapse text-[13px]">
               <thead>
                 <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-ink-faint">
                   <th className="px-4 py-2 font-medium">Currency</th>
-                  <th className="px-4 py-2 text-right font-medium">Transactions</th>
+                  <th className="px-4 py-2 text-right font-medium">Txns</th>
                   <th className="px-4 py-2 text-right font-medium">Original total</th>
                   <th className="px-4 py-2 text-right font-medium">Settled AED</th>
                 </tr>
               </thead>
               <tbody>
-                {currencies.slice(0, 12).map((s) => (
+                {currencies.slice(0, 10).map((s) => (
                   <tr key={s.currency} className="border-b border-line last:border-0">
                     <td className="px-4 py-2 font-medium">{s.currency}</td>
                     <td className="tnum px-4 py-2 text-right text-ink-muted">
@@ -317,9 +436,12 @@ export function Dashboard() {
               </tbody>
             </table>
           </div>
-          {currencies.length > 12 && (
+          {currencies.length > 10 && (
             <p className="border-t border-line px-4 py-2 text-xs text-ink-muted">
-              {currencies.length - 12} further currencies not shown.
+              {currencies.length - 10} further currencies not shown.{' '}
+              <Link to="/transactions" className="text-accent hover:underline underline-offset-2">
+                See all transactions
+              </Link>
             </p>
           )}
         </Panel>
@@ -327,8 +449,8 @@ export function Dashboard() {
 
       <p className="mt-5 text-xs text-ink-faint">
         Balances are recomputed from the transactions on every read, never stored.
-        The import reproduced all {formatCount(1946)} balance figures cached in
-        the workbook with no mismatches.
+        The import reproduced all {formatCount(1946)} balance figures cached in the
+        workbook with no mismatches.
       </p>
     </Page>
   );
