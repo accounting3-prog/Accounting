@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+/*
+  Design intent: a working ledger, not a marketing dashboard.
+
+  The reference points are printed financial statements and internal audit
+  tools — dense, quiet, legible at a glance, with figures that line up so the
+  eye can scan a column. Colour carries meaning and nothing else: an amount is
+  never coloured for decoration, only to say negative, positive, or unresolved.
+
+  No gradients, no large radii, no shadows beyond a hairline lift on overlays.
+*/
+
+@theme {
+  /* Warm neutral ground — softer than pure grey, easier over a long session */
+  --color-canvas: #faf9f7;
+  --color-surface: #ffffff;
+  --color-sunken: #f4f2ef;
+
+  --color-line: #e6e3dd;
+  --color-line-strong: #d3cfc7;
+
+  --color-ink: #1c1b19;
+  --color-ink-muted: #6a675f;
+  --color-ink-faint: #949086;
+
+  /* One restrained accent: deep ink blue, used for navigation and links */
+  --color-accent: #1f4a73;
+  --color-accent-soft: #eef3f8;
+
+  /* Semantic — money and state */
+  --color-negative: #9d2f28;
+  --color-negative-soft: #fdf3f2;
+  --color-positive: #1d6b4f;
+  --color-positive-soft: #f0f7f3;
+  --color-review: #8a5a10;
+  --color-review-soft: #fdf6e9;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono",
+    Menlo, Consolas, monospace;
+
+  --radius-sm: 3px;
+  --radius-md: 5px;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Figures line up in a column and compare at a glance. Every number in this
+   product is tabular; none are proportional. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* A quiet focus ring that survives on both light surfaces */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+/* Tables scroll inside their own container; the page never scrolls sideways */
+.scroll-x {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.scroll-x::-webkit-scrollbar {
+  height: 9px;
+}
+.scroll-x::-webkit-scrollbar-thumb {
+  background: var(--color-line-strong);
+  border-radius: 99px;
+}
+.scroll-x::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -12,27 +12,102 @@ Nothing in this repo writes back to it.
 |---|---|
 | Workbook audit (independent, from first principles) | done — 0 disagreements, 0 blocking findings |
 | Extraction to normalised JSON | done — 1,948 transactions, 1,946 balances verified |
-| Database schema | done — `supabase/schema.sql` |
+| Database schema | done, applied to the live Supabase project |
 | Test suite | done — 35 tests |
-| Live Supabase importer | pending — needs a Supabase project |
-| New-transaction form | pending |
-| Repo + Supabase + Vercel provisioning | **blocked — no credentials available** |
+| Frontend | done — builds clean, runs on the audited sample data |
+| Live Supabase importer | pending |
+| Vercel deployment | ready to deploy |
 
 ## Layout
 
 ```
 scripts/extract.py     Workbook -> normalised ledger. Dry-run only.
 scripts/audit.py       Independent re-audit. Shares no code with extract.py.
+scripts/make_sample.py Generates the frontend's sample data from the extraction.
+scripts/db/            Schema application and connection to Supabase.
 supabase/schema.sql    Postgres schema, views and RLS policies.
 tests/test_ledger.py   35 tests. Run: python tests/test_ledger.py
-scripts/out/           Generated output (gitignored).
+web/                   React 19 + TypeScript + Vite + Tailwind frontend.
 ```
 
-## Running
+## Running the frontend locally
 
 ```bash
-python scripts/audit.py   --out scripts/out/audit.json
+cd web && npm install
+```
+
+```bash
+npm run dev
+```
+
+Opens on http://localhost:5173. With no environment variables set, the app runs
+on the audited workbook extract — every figure on screen is real, so the UI is
+fully reviewable before the backend is connected. The sidebar states which
+source is in use.
+
+To point it at Supabase, copy the example file and fill in the two public
+values:
+
+```bash
+cp web/.env.example web/.env.local
+```
+
+To produce a production build:
+
+```bash
+cd web && npm run build
+```
+
+### Note on `node_modules`
+
+Installing dependencies onto the Google shared drive silently truncates files
+to zero bytes. If the repo lives on `G:\`, install and build from a local-disk
+copy, or keep `node_modules` outside the synced folder.
+
+## Deploying to Vercel
+
+1. **Import the repository** at vercel.com/new, choosing `accounting3-prog/Accounting`.
+2. **Root Directory** — set to `web`. This is required; the repository root has
+   no frontend.
+3. **Framework Preset** — Vite. Build command `npm run build`, output `dist`.
+   Vercel infers all three once the root directory is set.
+4. **Environment Variables** — add these two, for all environments:
+
+   | Name | Value |
+   |---|---|
+   | `VITE_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
+   | `VITE_SUPABASE_PUBLISHABLE_KEY` | `sb_publishable_…` |
+
+5. **Deploy.**
+
+`vercel.json` rewrites every path to `index.html` so client-side routes such as
+`/cards/card-5` resolve on a cold load rather than 404ing.
+
+### What must never go into Vercel
+
+Anything prefixed `VITE_` is inlined into the JavaScript bundle that every
+visitor downloads. These bypass Row Level Security completely and belong only
+in the server-side `.env`, which is gitignored:
+
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_SECRET_KEY`
+- `DATABASE_URL`, `PGPASSWORD`
+
+The publishable key is safe to ship precisely because RLS is enforced in the
+database — an insert with it returns 401 unless the signed-in user is a named
+admin.
+
+## Running the audit and extraction
+
+```bash
+python scripts/audit.py --out scripts/out/audit.json
+```
+
+```bash
 python scripts/extract.py --out scripts/out/normalised.json --anomalies scripts/out/anomalies.json
+```
+
+```bash
 python tests/test_ledger.py
 ```
 
@@ -66,6 +141,8 @@ Card names are the sheet names, verbatim.
    refund never merge; 130 genuine repeat charges never collapse.
 5. **Every repair keeps its original.** 17 transposed dates carry
    `source_date_raw`, `date_repaired` and a note saying what changed.
+6. **Currencies are never added together.** Spend is reported per currency with
+   no grand total; the only cross-card figure is the AED settlement amount.
 
 ## Open questions for the account owner
 
