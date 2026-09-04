@@ -137,12 +137,14 @@ try {
   const amex = raw.find((r) => r.name.startsWith('AMEX 3024'));
   const rak = raw.find((r) => r.name.startsWith('RAK 9825'));
 
-  check('AMEX 3024 source workbook balance', Number(amex.source_balance), 25474.74);
-  check('AMEX 3024 ledger balance incl. FLYNAS', Number(amex.ledger_balance), 16728.96);
+  // The workbook was corrected on 2026-09-04: a balance formula was added to
+  // row 5, so the sheet now includes FLYNAS itself and the two figures agree.
+  check('AMEX 3024 source workbook balance', Number(amex.source_balance), 16728.96);
+  check('AMEX 3024 official live balance', Number(amex.ledger_balance), 16728.96);
   check(
-    'AMEX 3024 reconciliation difference',
+    'AMEX 3024 reconciliation difference is now zero',
     Number(amex.source_balance) - Number(amex.ledger_balance),
-    8745.78,
+    0,
   );
   // Scoped to the specific row. FLYNAS is an airline and appears five times
   // across the workbook; only AMEX 3024 row 5 is the excluded one, and a
@@ -163,8 +165,7 @@ try {
   // as absent from the workbook's own formula chain, which is what keeps the
   // reconciliation difference visible.
   check('FLYNAS is not voided', flynas[0].status !== 'voided', true);
-  check('FLYNAS still marked absent from the workbook formula',
-        flynas[0].included_in_source_balance, false);
+  check('FLYNAS is counted in both balances', flynas[0].included_in_source_balance, true);
   check('FLYNAS currency preserved', flynas[0].currency, 'SAR');
   check('FLYNAS original amount preserved', Number(flynas[0].original_amount), 8925.77);
 
@@ -180,7 +181,7 @@ try {
 
   console.log('\nAMEX 3024 — THE ARITHMETIC, AND THE FIGURE THAT MUST NEVER APPEAR');
   console.log('-'.repeat(94));
-  const SOURCE_CHAIN = 25474.74;
+  const SOURCE_CHAIN = 25474.74;   // the chain immediately before the FLYNAS row
   const FLYNAS_AMOUNT = -8745.78;
   const OFFICIAL = 16728.96;
   const FORBIDDEN = 7983.18; // FLYNAS deducted a second time
@@ -191,11 +192,11 @@ try {
     OFFICIAL,
   );
   check('official live ledger balance is that figure', Number(amex.ledger_balance), OFFICIAL);
-  check(
-    'FLYNAS is applied exactly once, not twice',
-    Number(amex.source_balance) + FLYNAS_AMOUNT,
-    Number(amex.ledger_balance),
-  );
+  // Both balances now include FLYNAS, so the test is that the figure equals the
+  // pre-FLYNAS chain less one deduction — not that one balance is the other
+  // minus it.
+  check('FLYNAS is applied exactly once, not twice',
+        Number((SOURCE_CHAIN + FLYNAS_AMOUNT).toFixed(2)), Number(amex.ledger_balance));
 
   // Every balance figure the system can produce, from every surface, scanned
   // for the double deduction. 7,983.18 appearing anywhere would mean FLYNAS had

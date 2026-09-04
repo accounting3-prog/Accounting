@@ -168,7 +168,7 @@ def test_balance_chain_reproduces_excel():
         v = card(name)["verification"]
         eq(len(v["mismatches"]), 0, f"{name} balance mismatches")
         total += v["checked"]
-    eq(total, 1946, "rows verified against Excel's cached balances")
+    eq(total, 1947, "rows verified against Excel's cached balances")
 
 
 @test
@@ -187,7 +187,7 @@ def test_closing_balance_equals_last_cell_in_sheet():
         "RAK 8871 (8435)(0033)": 178885.95,
         "AMEX 4000 VPAY": 599536.31,
         "MASTERCARD 6404 VPAY": 127930.85,
-        "AMEX 3024 (3016- COR)": 25474.74,   # FLYNAS is not in the sheet's total
+        "AMEX 3024 (3016- COR)": 16728.96,   # the sheet now includes FLYNAS
         "AMEX 2044 (2036- VIP)": 13708.16,
         "RAK 9825 (6071)": 165.72,           # includes the manual overwrite
     }
@@ -212,27 +212,35 @@ def test_closing_balance_equals_last_cell_in_sheet():
 @test
 def test_amex_3024_flynas_excluded_from_source_balance():
     s = card("AMEX 3024 (3016- COR)")["summary"]
-    eq(s["source_balance"], 25474.74, "AMEX 3024 source balance (workbook)")
+    eq(s["source_balance"], 16728.96, "AMEX 3024 source balance (workbook)")
     eq(s["ledger_balance"], 16728.96, "AMEX 3024 ledger balance (incl. FLYNAS)")
-    eq(s["reconciliation_difference"], 8745.78, "AMEX 3024 difference")
+    eq(s["reconciliation_difference"], 0.0, "AMEX 3024 difference, now reconciled")
 
     flynas = [t for t in source_transactions("AMEX 3024 (3016- COR)")
               if t["source_row"] == 5]
     eq(len(flynas), 1, "FLYNAS row imported")
     t = flynas[0]
-    eq(t["status"], "excluded_from_source_balance", "FLYNAS status")
-    eq(t["included_in_source_balance"], False, "FLYNAS in source balance")
+    # The sheet now carries a balance formula on this row, so it is no longer
+    # excluded from the workbook's own total.
+    eq(t["status"], "confirmed", "FLYNAS status")
+    eq(t["included_in_source_balance"], True, "FLYNAS in source balance")
     eq(t["amount_aed"], -8745.78, "FLYNAS amount")
     eq(t["currency"], "SAR", "FLYNAS currency preserved")
     eq(t["original_amount"], 8925.77, "FLYNAS original amount preserved")
     eq(t["supplier"], "FLYNAS RIYADH", "FLYNAS supplier")
-    assert "not included in its running-balance formula" in t["review_reason"]
+    eq(t["review_reason"], None, "FLYNAS no longer carries an exclusion reason")
 
 
 FLYNAS_AED = -8745.78
-AMEX_3024_SOURCE_BALANCE = 25474.74   # cell F4 — the sheet's own formula chain
-AMEX_3024_LEDGER_BALANCE = 16728.96   # 25,474.74 - 8,745.78, FLYNAS once
-AMEX_3024_DIFFERENCE = 8745.78
+# The source workbook was corrected on 2026-09-04: a balance formula was added
+# to AMEX 3024 row 5, so the sheet's own chain now includes FLYNAS and reads
+# 16,728.96 at F5. The ledger figure never moved — it always counted FLYNAS
+# once — so the two now agree and the reconciliation difference is zero.
+AMEX_3024_SOURCE_BALANCE = 16728.96   # cell F5, the sheet's own formula chain
+AMEX_3024_LEDGER_BALANCE = 16728.96   # unchanged: 25,474.74 - 8,745.78
+AMEX_3024_DIFFERENCE = 0.0
+# Still forbidden, and for the same reason: it is FLYNAS deducted twice.
+AMEX_3024_FORBIDDEN_PRIOR_SOURCE = 25474.74  # what the sheet read before the fix
 # 7,983.18 deducts FLYNAS twice and corresponds to no cell in the workbook.
 AMEX_3024_FORBIDDEN = 7983.18
 
@@ -264,11 +272,13 @@ def test_flynas_is_deducted_exactly_once():
     eq(len(flynas), 1, "FLYNAS must exist exactly once in the ledger")
     eq(flynas[0]["amount_aed"], FLYNAS_AED, "FLYNAS amount")
 
-    # The ledger is the source balance with FLYNAS applied once, no more.
-    eq(s["ledger_balance"], s["source_balance"] + FLYNAS_AED,
-       "ledger balance is the source balance minus FLYNAS exactly once")
-    eq(s["reconciliation_difference"], -FLYNAS_AED,
-       "the difference is one FLYNAS, not two")
+    # The sheet now applies FLYNAS itself, so the two balances agree. What must
+    # still hold is that it is applied ONCE: 25,474.74 was the chain before the
+    # row, and one deduction from it is the balance both figures now show.
+    eq(AMEX_3024_FORBIDDEN_PRIOR_SOURCE + FLYNAS_AED, s["ledger_balance"],
+       "the balance is the pre-FLYNAS chain minus FLYNAS exactly once")
+    eq(s["reconciliation_difference"], 0.0,
+       "source and ledger now agree, so the difference is zero")
 
     # And explicitly not the double-deducted figure.
     assert abs(s["ledger_balance"] - AMEX_3024_FORBIDDEN) > 0.005, \
@@ -378,7 +388,8 @@ def test_adjustment_never_inside_spend_or_funding():
 @test
 def test_other_five_cards_reconcile_exactly():
     for name in ["MASTERCARD 5135 (4173) (7206)", "RAK 8871 (8435)(0033)",
-                 "AMEX 4000 VPAY", "MASTERCARD 6404 VPAY", "AMEX 2044 (2036- VIP)"]:
+                 "AMEX 4000 VPAY", "MASTERCARD 6404 VPAY", "AMEX 2044 (2036- VIP)",
+                 "AMEX 3024 (3016- COR)"]:
         eq(card(name)["summary"]["reconciliation_difference"], 0.0,
            f"{name} source and ledger must agree")
 
