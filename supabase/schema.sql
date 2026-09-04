@@ -443,6 +443,9 @@ select
 from transactions t
 join cards c on c.id = t.card_id
 where t.currency is not null
+  -- The view is named for spend and is labelled as such in the UI. Without
+  -- this, a top-up counted as spend and the two netted against each other.
+  and t.direction = 'spend'
   and t.entry_type = 'source_transaction'
   and t.status <> 'voided'
   and (c.opening_date is null or t.txn_date >= c.opening_date)
@@ -457,6 +460,19 @@ from transactions t
 join cards c on c.id = t.card_id
 where t.status in ('needs_review','excluded_from_source_balance')
    or t.entry_type = 'reconciliation_adjustment';
+
+-- ---------------------------------------------------------------------------
+-- Views run as the caller, not as their owner
+-- ---------------------------------------------------------------------------
+--
+-- A PostgreSQL view executes with its OWNER's privileges unless this is set,
+-- which means Row Level Security on the tables beneath it does not apply. With
+-- it off, selecting from a view was a way straight past every policy below.
+
+alter view card_balances          set (security_invoker = on);
+alter view card_spend_by_currency set (security_invoker = on);
+alter view review_queue           set (security_invoker = on);
+alter view transactions_searchable set (security_invoker = on);
 
 -- ---------------------------------------------------------------------------
 -- Access control — enforced here, not only in the UI
@@ -489,8 +505,11 @@ alter table currencies              enable row level security;
 do $$
 declare t text;
 begin
+    -- transaction_corrections is deliberately absent: it records money moving
+    -- and must be append-only, so it gets read + insert policies below rather
+    -- than the generic "an admin may do anything" pair.
     foreach t in array array['cards','suppliers','transactions','import_batches',
-                             'import_anomalies','transaction_corrections','currencies']
+                             'import_anomalies','currencies']
     loop
         execute format(
             'create policy %I on %I for select to authenticated using (true)',
@@ -501,6 +520,11 @@ begin
             t || '_write', t);
     end loop;
 end $$;
+
+create policy transaction_corrections_read on transaction_corrections
+    for select to authenticated using (true);
+create policy transaction_corrections_insert on transaction_corrections
+    for insert to authenticated with check (is_admin());
 
 create policy admins_read  on admins for select to authenticated using (true);
 create policy admins_write on admins for all to authenticated

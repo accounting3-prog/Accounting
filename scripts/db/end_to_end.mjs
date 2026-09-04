@@ -300,21 +300,43 @@ try {
     bal = await balance(newId);
     check('FX purchase on the new card', near(bal, 75000 - 3672.5), `${money(bal)} AED`);
 
-    // Repeat charges must not merge
+    // Two identical submissions moments apart are the same submission arriving
+    // twice — a double-clicked button, a retry, a refresh mid-save. For a
+    // ledger, creating a second row there counts the same money twice.
     await addTxn(newId, { kind: 'purchase', amount: 500, date: '2026-08-20', paymentRef: 'NC-DUP', req: 'NC-R' });
     await addTxn(newId, { kind: 'purchase', amount: 500, date: '2026-08-20', paymentRef: 'NC-DUP', req: 'NC-R' });
-    const dups = await client.query(
+    const accidental = await client.query(
+      `select count(*)::int n from transactions
+        where card_id = $1 and payment_ref = 'NC-DUP'`,
+      [newId],
+    );
+    check(
+      'a resubmitted form does NOT create a second transaction',
+      accidental.rows[0].n === 1,
+      `${accidental.rows[0].n} row`,
+    );
+    bal = await balance(newId);
+    check('the amount is counted once, not twice', near(bal, 75000 - 3672.5 - 500),
+          `${money(bal)} AED`);
+
+    // A genuine repeat charge is still possible: the person entering it says so.
+    await client.query(
+      `select create_transaction($1,'2026-08-20','purchase',500,'E2E SUPPLIER','NC-R','NC-DUP',
+         null,null,null,null,null,null,null,null,null,null,null,false,true)`,
+      [newId],
+    );
+    const deliberate = await client.query(
       `select count(*)::int n, max(occurrence) as maxocc from transactions
         where card_id = $1 and payment_ref = 'NC-DUP'`,
       [newId],
     );
     check(
-      'an identical repeat charge is kept, not merged',
-      dups.rows[0].n === 2 && Number(dups.rows[0].maxocc) === 2,
-      `${dups.rows[0].n} rows, occurrence up to ${dups.rows[0].maxocc}`,
+      'a deliberate repeat charge IS kept as its own row',
+      deliberate.rows[0].n === 2 && Number(deliberate.rows[0].maxocc) === 2,
+      `${deliberate.rows[0].n} rows, occurrence up to ${deliberate.rows[0].maxocc}`,
     );
     bal = await balance(newId);
-    check('both repeat charges hit the balance', near(bal, 75000 - 3672.5 - 1000),
+    check('the deliberate repeat also hits the balance', near(bal, 75000 - 3672.5 - 1000),
           `${money(bal)} AED`);
 
     // Reading repeatedly must not drift
