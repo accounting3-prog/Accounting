@@ -37,10 +37,14 @@ export function TransactionDrawer({
   transaction,
   card,
   onClose,
+  onEdit,
+  canEdit = false,
 }: {
   transaction: Transaction | null;
   card: Card | undefined;
   onClose: () => void;
+  onEdit?: (t: Transaction) => void;
+  canEdit?: boolean;
 }) {
   useEffect(() => {
     if (!transaction) return;
@@ -76,13 +80,24 @@ export function TransactionDrawer({
               {card?.name} · {formatDate(t.txn_date)}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 rounded-sm border border-line-strong px-2 py-1 text-xs text-ink-muted hover:bg-sunken"
-          >
-            Close
-          </button>
+          <div className="flex shrink-0 gap-1.5">
+            {canEdit && onEdit && t.entry_type === 'source_transaction' && (
+              <button
+                type="button"
+                onClick={() => onEdit(t)}
+                className="rounded-sm border border-line-strong px-2 py-1 text-xs font-medium text-ink hover:bg-sunken"
+              >
+                Edit
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-sm border border-line-strong px-2 py-1 text-xs text-ink-muted hover:bg-sunken"
+            >
+              Close
+            </button>
+          </div>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">

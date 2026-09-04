@@ -12,7 +12,6 @@
  */
 
 import { supabase, isSupabaseConfigured } from './supabase';
-import sample from '../data/ledger-sample.json';
 import type { Card, CurrencySpend, LedgerData, Transaction } from './types';
 
 export type LedgerSource = 'supabase' | 'sample';
@@ -29,7 +28,20 @@ export interface LoadResult {
   failure?: LoadFailure;
 }
 
-const SAMPLE = sample as unknown as LedgerData;
+/**
+ * The audited extract, ~1.2 MB, loaded only when it is actually going to be
+ * shown — a signed-out visitor, or a live read that failed. A signed-in user
+ * reading live data never downloads it at all, which is the common case.
+ */
+let sampleCache: LedgerData | null = null;
+
+async function loadSample(): Promise<LedgerData> {
+  if (!sampleCache) {
+    const mod = await import('../data/ledger-sample.json');
+    sampleCache = (mod.default ?? mod) as unknown as LedgerData;
+  }
+  return sampleCache;
+}
 
 /** Supabase rows arrive with the database's own column names. */
 interface CardRow {
@@ -77,23 +89,62 @@ export async function loadLedger(
   { signedIn = false }: { signedIn?: boolean } = {},
 ): Promise<LoadResult> {
   if (!isSupabaseConfigured || !supabase || !signedIn) {
-    return { data: SAMPLE, source: 'sample' };
+    return { data: await loadSample(), source: 'sample' };
   }
 
   try {
-    const [cardsRes, balancesRes, txnRes] = await Promise.all([
+    const [cardsRes, balancesRes, spendRes] = await Promise.all([
       supabase.from('cards').select('*').order('name'),
       supabase.from('card_balances').select('*'),
-      supabase
+      // Per-currency spend is aggregated in the database over every row. It was
+      // previously summed in the browser from whatever transactions had been
+      // fetched, which silently under-reported once there were more rows than
+      // one page.
+      supabase.from('card_spend_by_currency').select('*'),
+    ]);
+
+    // PostgREST answers at most 1,000 rows per request whatever limit is asked
+    // for, so a single call cannot return the ledger and never could. Pages are
+    // fetched until the server says there are no more; `range` is explicit
+    // rather than relying on a limit the server is free to ignore.
+    const PAGE = 1000;
+    const HARD_CAP = 100_000; // a runaway guard, not an expected ceiling
+    const txnRows: Record<string, unknown>[] = [];
+    let truncated = false;
+    for (let from = 0; from < HARD_CAP; from += PAGE) {
+      const page = await supabase
         .from('transactions')
         .select('*')
         .order('txn_date', { ascending: false })
-        .limit(5000),
-    ]);
+        .order('id', { ascending: true }) // stable across pages
+        .range(from, from + PAGE - 1);
+      if (page.error) {
+        return { data: await loadSample(), source: 'sample', failure: classify(page.error) };
+      }
+      txnRows.push(...(page.data as Record<string, unknown>[]));
+      if (!page.data || page.data.length < PAGE) break;
+      if (from + PAGE >= HARD_CAP) truncated = true;
+    }
 
-    const firstError = cardsRes.error ?? balancesRes.error ?? txnRes.error;
+    const txnRes = { data: txnRows, error: null };
+    const firstError = cardsRes.error ?? balancesRes.error ?? spendRes.error;
     if (firstError) {
-      return { data: SAMPLE, source: 'sample', failure: classify(firstError) };
+      return { data: await loadSample(), source: 'sample', failure: classify(firstError) };
+    }
+    if (truncated) {
+      // Never silently. A partial ledger that looks complete is the failure
+      // this whole system exists to prevent.
+      return {
+        data: await loadSample(),
+        source: 'sample',
+        failure: {
+          kind: 'unknown',
+          message:
+            `The ledger holds more than ${HARD_CAP.toLocaleString()} transactions, ` +
+            'which this page cannot load in full. Showing the sample rather than a ' +
+            'partial ledger. Server-side paging is needed.',
+        },
+      };
     }
 
     const balances = new Map<string, BalanceRow>(
@@ -176,39 +227,27 @@ export async function loadLedger(
       notes: (t.notes as string) ?? undefined,
     }));
 
-    // Per (card, currency), never summed across currencies.
-    const buckets = new Map<string, CurrencySpend>();
-    for (const t of transactions) {
-      if (t.direction !== 'spend' || !t.currency) continue;
-      const k = `${t.cardId}|${t.currency}`;
-      const b = buckets.get(k);
-      if (b) {
-        b.count += 1;
-        b.originalTotal += t.original_amount ?? 0;
-        b.aedTotal += t.amount_aed;
-      } else {
-        buckets.set(k, {
-          cardId: t.cardId,
-          currency: t.currency,
-          count: 1,
-          originalTotal: t.original_amount ?? 0,
-          aedTotal: t.amount_aed,
-        });
-      }
-    }
+    // Straight from the database view, which aggregates over every row and
+    // keeps one line per currency with no cross-currency total.
+    const spendByCurrency: CurrencySpend[] = (
+      spendRes.data as Record<string, unknown>[]
+    )
+      .map((s) => ({
+        cardId: String(s.card_id),
+        currency: String(s.currency),
+        count: num(s.transaction_count as string),
+        originalTotal: num(s.total_original_amount as string),
+        aedTotal: num(s.total_settled_aed as string),
+      }))
+      .sort((a, b) => b.count - a.count);
 
     return {
-      data: {
-        generatedFrom: 'Supabase',
-        cards,
-        transactions,
-        spendByCurrency: [...buckets.values()].sort((a, b) => b.count - a.count),
-      },
+      data: { generatedFrom: 'Supabase', cards, transactions, spendByCurrency },
       source: 'supabase',
     };
   } catch (e) {
     return {
-      data: SAMPLE,
+      data: await loadSample(),
       source: 'sample',
       failure: classify({ message: e instanceof Error ? e.message : String(e) }),
     };
@@ -308,6 +347,43 @@ export async function revokeAdmin(
     p_user_id: userId,
     p_rationale: rationale || null,
   });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+export interface TransactionEdit {
+  p_id: string;
+  p_rationale: string;
+  p_txn_date?: string | null;
+  p_amount_aed?: number | null;
+  p_kind?: string | null;
+  p_supplier?: string | null;
+  p_supplier_country?: string | null;
+  p_req_number?: string | null;
+  p_payment_ref?: string | null;
+  p_currency?: string | null;
+  p_original_amount?: number | null;
+  p_exchange_rate?: number | null;
+  p_crm?: string | null;
+  p_lpo_number?: string | null;
+  p_invoice?: string | null;
+  p_client?: string | null;
+  p_sales_operation?: string | null;
+  p_description?: string | null;
+  p_notes?: string | null;
+  p_clear_currency?: boolean;
+}
+
+/**
+ * Edits a transaction through the database function, which requires a reason,
+ * records every field's before and after, and cannot touch the columns that
+ * trace a figure back to the source workbook.
+ */
+export async function updateTransaction(
+  edit: TransactionEdit,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not connected to Supabase.' };
+  const { error } = await supabase.rpc('update_transaction', edit);
   if (error) return { ok: false, error: error.message };
   return { ok: true };
 }

@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Page } from '../components/Layout';
 import { TransactionDrawer } from '../components/TransactionDrawer';
+import { EditTransactionDialog } from '../components/EditTransactionDialog';
+import { useLedgerState } from '../components/LedgerProvider';
 import {
   Button,
   EmptyState,
@@ -84,6 +86,9 @@ export function Transactions() {
   const [selected, setSelected] = useState<Transaction | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [exported, setExported] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Transaction | null>(null);
+  const { reload, signedIn, source } = useLedgerState();
+  const canEdit = signedIn && source === 'supabase';
 
   const currencyOptions = useMemo(() => {
     const set = new Set<string>();
@@ -411,6 +416,18 @@ export function Transactions() {
         transaction={selected}
         card={cards.find((c) => c.id === selected?.cardId)}
         onClose={() => setSelected(null)}
+        canEdit={canEdit}
+        onEdit={(t) => {
+          setSelected(null);
+          setEditing(t);
+        }}
+      />
+
+      <EditTransactionDialog
+        transaction={editing}
+        card={cards.find((c) => c.id === editing?.cardId)}
+        onClose={() => setEditing(null)}
+        onDone={reload}
       />
     </Page>
   );

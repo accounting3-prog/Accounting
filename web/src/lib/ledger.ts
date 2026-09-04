@@ -11,7 +11,6 @@
  *   - amounts in different currencies are never added together.
  */
 
-import sample from '../data/ledger-sample.json';
 import type {
   Card,
   CurrencySpend,
@@ -30,9 +29,17 @@ import type {
  * from a bundled extract to Supabase. LedgerProvider fills this before any page
  * renders, so a component never reads a half-loaded ledger.
  *
- * Seeded with the audited sample so the app is usable with no backend.
+ * Starts empty: LedgerProvider fills it — from Supabase, or from the audited
+ * sample loaded on demand — before any page renders. The sample is no longer
+ * imported here, so its 1.2 MB stays out of the initial bundle for the signed-in
+ * user who will never see it.
  */
-let data: LedgerData = sample as unknown as LedgerData;
+let data: LedgerData = {
+  generatedFrom: 'none',
+  cards: [],
+  transactions: [],
+  spendByCurrency: [],
+};
 
 export function setLedgerData(next: LedgerData): void {
   data = next;

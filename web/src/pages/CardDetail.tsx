@@ -2,6 +2,11 @@ import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Page } from '../components/Layout';
 import { TransactionDrawer } from '../components/TransactionDrawer';
+import { EditTransactionDialog } from '../components/EditTransactionDialog';
+import { useLedgerState } from '../components/LedgerProvider';
+import { matchesQuery, searchHaystack } from '../lib/search';
+import { exportCsv, exportXlsx } from '../lib/export';
+import { EMPTY_FILTERS } from '../lib/search';
 import {
   Button,
   EmptyState,
@@ -11,6 +16,7 @@ import {
   Stat,
   StatusPill,
   Tag,
+  fieldClass,
 } from '../components/ui';
 import { formatCount, formatDate, formatDateShort } from '../lib/format';
 import {
@@ -122,6 +128,11 @@ export function CardDetail() {
   const { id } = useParams<{ id: string }>();
   const card = getCard(id ?? '');
   const [selected, setSelected] = useState<Transaction | null>(null);
+  const [editing, setEditing] = useState<Transaction | null>(null);
+  const [query, setQuery] = useState('');
+  const [showAll, setShowAll] = useState(false);
+  const { reload, signedIn, source } = useLedgerState();
+  const canEdit = signedIn && source === 'supabase';
 
   if (!card) {
     return (
@@ -142,9 +153,16 @@ export function CardDetail() {
   }
 
   const transactions = getCardTransactions(card.id);
-  const recent = [...transactions]
-    .sort((a, b) => (b.txn_date ?? '').localeCompare(a.txn_date ?? ''))
-    .slice(0, 15);
+
+  // Searching within one card, over the same fields the main list searches, so
+  // a 1,370-transaction account does not have to be filtered from elsewhere.
+  const sorted = [...transactions].sort((a, b) =>
+    (b.txn_date ?? '').localeCompare(a.txn_date ?? ''),
+  );
+  const matched = query.trim()
+    ? sorted.filter((t) => matchesQuery(searchHaystack(t, card.name), query))
+    : sorted;
+  const recent = showAll || query.trim() ? matched.slice(0, 200) : matched.slice(0, 15);
   const currencies = getSpendByCurrency(card.id);
   const exceptions = transactions.filter(
     (t) => t.status !== 'confirmed' || t.entry_type === 'reconciliation_adjustment',
@@ -248,11 +266,61 @@ export function CardDetail() {
           <BalanceHistory card={card} transactions={transactions} />
 
           <Panel
-            title="Recent activity"
-            description={`${formatCount(card.transactionCount)} transactions in total.`}
+            title={query.trim() ? 'Search results' : 'Recent activity'}
+            description={
+              query.trim()
+                ? `${formatCount(matched.length)} of ${formatCount(transactions.length)} transactions match.`
+                : `${formatCount(card.transactionCount)} transactions in total.`
+            }
+            action={
+              matched.length > 0 && (
+                <div className="flex gap-1.5">
+                  <Button
+                    onClick={() =>
+                      exportCsv(matched, [card], query, {
+                        ...EMPTY_FILTERS,
+                        query,
+                        cardIds: [card.id],
+                      })
+                    }
+                  >
+                    CSV
+                  </Button>
+                  <Button
+                    onClick={() =>
+                      exportXlsx(matched, [card], query, {
+                        ...EMPTY_FILTERS,
+                        query,
+                        cardIds: [card.id],
+                      })
+                    }
+                  >
+                    Excel
+                  </Button>
+                </div>
+              )
+            }
           >
+            <div className="border-b border-line px-4 py-3">
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search this card — supplier, request number, payment reference, invoice, LPO…"
+                className={fieldClass}
+                aria-label={`Search transactions on ${card.name}`}
+              />
+            </div>
             {recent.length === 0 ? (
-              <EmptyState title="No activity on this card" />
+              <EmptyState
+                title={query.trim() ? 'Nothing matches that search' : 'No activity on this card'}
+                description={query.trim() ? 'Try a shorter term.' : undefined}
+                action={
+                  query.trim() ? (
+                    <Button onClick={() => setQuery('')}>Clear search</Button>
+                  ) : undefined
+                }
+              />
             ) : (
               <div className="scroll-x">
                 <table className="w-full min-w-[620px] border-collapse text-[13px]">
@@ -302,6 +370,14 @@ export function CardDetail() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+            {!query.trim() && !showAll && matched.length > recent.length && (
+              <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
+                <span className="text-xs text-ink-muted">
+                  Showing the {recent.length} most recent of {formatCount(matched.length)}
+                </span>
+                <Button onClick={() => setShowAll(true)}>Show more</Button>
               </div>
             )}
           </Panel>
@@ -401,7 +477,23 @@ export function CardDetail() {
         </div>
       </div>
 
-      <TransactionDrawer transaction={selected} card={card} onClose={() => setSelected(null)} />
+      <TransactionDrawer
+        transaction={selected}
+        card={card}
+        onClose={() => setSelected(null)}
+        canEdit={canEdit}
+        onEdit={(t) => {
+          setSelected(null);
+          setEditing(t);
+        }}
+      />
+
+      <EditTransactionDialog
+        transaction={editing}
+        card={card}
+        onClose={() => setEditing(null)}
+        onDone={reload}
+      />
     </Page>
   );
 }
