@@ -403,11 +403,14 @@ select
 
     -- Kept out of spend and funding by construction: an adjustment has no
     -- direction, so neither filter below can reach it.
+    -- A voided adjustment is a decision already taken. It stays on the row for
+    -- the audit trail but must not be reported as still outstanding.
     coalesce(sum(t.amount_aed)
-        filter (where t.entry_type = 'reconciliation_adjustment'), 0)
+        filter (where t.entry_type = 'reconciliation_adjustment'
+                  and t.status <> 'voided'), 0)
                                                   as review_adjustments_total,
-    count(*) filter (where t.entry_type = 'reconciliation_adjustment')
-                                                  as review_adjustments_count,
+    count(*) filter (where t.entry_type = 'reconciliation_adjustment'
+                       and t.status <> 'voided')  as review_adjustments_count,
 
     coalesce(sum(t.amount_aed) filter (where t.direction = 'spend'
                                          and t.status <> 'voided'), 0) as total_spend,

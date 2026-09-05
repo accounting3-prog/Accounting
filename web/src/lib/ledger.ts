@@ -135,6 +135,59 @@ export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/* --------------------------------------------------------------- reporting */
+
+export interface MonthActivity {
+  month: string;   // YYYY-MM
+  spend: number;   // negative
+  funding: number; // positive
+}
+
+/**
+ * Spend and funding by calendar month, most recent first.
+ *
+ * Kept as two separate figures rather than a net: a month that spent 6.7m and
+ * received 6.8m is not a quiet month, and netting them to +110k would say it
+ * was.
+ */
+export function activityByMonth(limit = 6): MonthActivity[] {
+  const months = new Map<string, MonthActivity>();
+  for (const t of data.transactions) {
+    if (!t.txn_date || t.entry_type !== 'source_transaction') continue;
+    const key = t.txn_date.slice(0, 7);
+    let m = months.get(key);
+    if (!m) {
+      m = { month: key, spend: 0, funding: 0 };
+      months.set(key, m);
+    }
+    if (t.direction === 'spend') m.spend += t.amount_aed;
+    else if (t.direction === 'funding') m.funding += t.amount_aed;
+  }
+  return [...months.values()].sort((a, b) => b.month.localeCompare(a.month)).slice(0, limit);
+}
+
+export interface SupplierSpend {
+  supplier: string;
+  count: number;
+  aed: number; // negative
+}
+
+/** Where the money actually went, in AED — the one currency they compare in. */
+export function topSuppliers(limit = 8): SupplierSpend[] {
+  const by = new Map<string, SupplierSpend>();
+  for (const t of data.transactions) {
+    if (t.direction !== 'spend' || !t.supplier) continue;
+    let s = by.get(t.supplier);
+    if (!s) {
+      s = { supplier: t.supplier, count: 0, aed: 0 };
+      by.set(t.supplier, s);
+    }
+    s.count += 1;
+    s.aed += t.amount_aed;
+  }
+  return [...by.values()].sort((a, b) => a.aed - b.aed).slice(0, limit);
+}
+
 /* ------------------------------------------------------------------ review */
 
 /** Why a transaction is in the review queue. Derived from the audit's own
@@ -169,7 +222,12 @@ export function getReviewItems(): ReviewItem[] {
       (t) =>
         t.status === 'needs_review' ||
         t.status === 'excluded_from_source_balance' ||
-        t.entry_type === 'reconciliation_adjustment',
+        // An adjustment belongs in the queue only while it is unresolved.
+        // Once confirmed or voided somebody has decided about it, and leaving
+        // it here said "1 awaiting review" on a card that was fully settled.
+        (t.entry_type === 'reconciliation_adjustment' &&
+          t.status !== 'confirmed' &&
+          t.status !== 'voided'),
     )
     .map((t) => ({
       transaction: t,

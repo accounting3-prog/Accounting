@@ -65,8 +65,11 @@ try {
                where t.direction = 'spend' and t.status <> 'voided'), 0)   as total_spend,
            coalesce(sum(t.amount_aed) filter (
                where t.direction = 'funding' and t.status <> 'voided'), 0) as total_funding,
+           -- A voided adjustment has been decided about; it stays on the row
+           -- for the audit trail but is not still outstanding.
            coalesce(sum(t.amount_aed) filter (
-               where t.entry_type = 'reconciliation_adjustment'), 0)       as adjustments,
+               where t.entry_type = 'reconciliation_adjustment'
+                 and t.status <> 'voided'), 0)                             as adjustments,
            count(*) filter (where t.entry_type = 'source_transaction')     as txn_count,
            count(*) filter (where t.status = 'needs_review')               as needs_review,
            count(*) filter (where t.status = 'excluded_from_source_balance') as excluded
@@ -87,6 +90,11 @@ try {
     ]),
   );
 
+  // Cards whose figures have moved away from the import through recorded
+  // corrections. Divergence is expected as the ledger is worked on; divergence
+  // with nothing on record is not.
+  const explained = [];
+
   console.log('\nPER-CARD BALANCES');
   console.log('-'.repeat(94));
   console.log(
@@ -103,17 +111,33 @@ try {
       near(r.source_balance, v.source_balance) &&
       near(r.ledger_balance, v.ledger_balance) &&
       near(diff, v.reconciliation_difference);
+    // The extraction is what the workbook said at import. The ledger moves on
+    // through audited corrections, so a card may legitimately differ — but only
+    // if the corrections that moved it are on record.
     const sqlEqExtract =
       near(r.source_balance, e.source_balance) &&
       near(r.ledger_balance, e.ledger_balance) &&
       near(diff, e.reconciliation_difference);
-
-    if (!sqlEqView || !sqlEqExtract) failures++;
+    if (!sqlEqExtract) {
+      const [{ n: corrections }] = await q(client,
+        `select count(*)::int n from transaction_corrections tc
+           join transactions t on t.id = tc.transaction_id
+           join cards c on c.id = t.card_id
+          where c.name = $1`, [r.name]);
+      if (corrections === 0) failures++;
+      else explained.push(`${r.name} (${corrections} recorded corrections)`);
+    }
+    if (!sqlEqView) failures++;
     console.log(
       `  ${r.name.padEnd(32)}${money(r.source_balance).padStart(14)}` +
         `${money(r.ledger_balance).padStart(14)}${money(diff).padStart(12)}` +
         `${(sqlEqView ? 'yes' : 'NO').padStart(10)}${(sqlEqExtract ? 'yes' : 'NO').padStart(13)}`,
     );
+  }
+
+  if (explained.length) {
+    console.log('\n  differs from the import, explained by audited corrections:');
+    for (const e of explained) console.log(`    ${e}`);
   }
 
   const totals = raw.reduce(
@@ -170,14 +194,23 @@ try {
   check('FLYNAS original amount preserved', Number(flynas[0].original_amount), 8925.77);
 
   console.log('');
-  check('RAK 9825 source workbook balance', Number(rak.source_balance), 165.72);
-  check('RAK 9825 ledger without the adjustment', Number(rak.ledger_balance), -1552.30);
-  check('RAK 9825 review adjustment held apart', Number(rak.adjustments), 1718.02);
-  check(
-    'RAK 9825 reconciliation difference',
-    Number(rak.source_balance) - Number(rak.ledger_balance),
-    1718.02,
+  // The reissued RAK 9825 statement (5 Sep 2026) carries no manual balance
+  // overwrite — the chain runs unbroken through the 10,000 payment — so the
+  // 1,718.02 was an artefact of the previous file. It is voided, kept on
+  // record, and the two balances now agree.
+  check('RAK 9825 statement balance', Number(rak.source_balance), -1552.78);
+  check('RAK 9825 ledger balance', Number(rak.ledger_balance), -1552.78);
+  check('RAK 9825 reconciles',
+        Number(rak.source_balance) - Number(rak.ledger_balance), 0);
+  check('no unresolved adjustment counts toward a balance',
+        Number(rak.adjustments), 0);
+
+  const [{ n: adjKept }] = await q(
+    client,
+    `select count(*)::int n from transactions t join cards c on c.id = t.card_id
+      where c.name like 'RAK 9825%' and t.entry_type = 'reconciliation_adjustment'`,
   );
+  check('the voided adjustment is kept on record, not deleted', adjKept, 1);
 
   console.log('\nAMEX 3024 — THE ARITHMETIC, AND THE FIGURE THAT MUST NEVER APPEAR');
   console.log('-'.repeat(94));

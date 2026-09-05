@@ -291,12 +291,14 @@ try {
         money(amex.ledger_balance));
   check('FLYNAS applied exactly once from the pre-FLYNAS chain',
         near(PRE_FLYNAS + FLYNAS, amex.ledger_balance));
-  check('RAK 9825 source balance', near(rak.source_balance, 165.72), money(rak.source_balance));
-  check('RAK 9825 ledger without the adjustment', near(rak.ledger_balance, -1552.30),
+  // Reissued statement, 5 Sep 2026: no manual overwrite, so the two agree.
+  check('RAK 9825 statement balance', near(rak.source_balance, -1552.78),
+        money(rak.source_balance));
+  check('RAK 9825 ledger balance', near(rak.ledger_balance, -1552.78),
         money(rak.ledger_balance));
-  check('RAK 9825 review adjustment held apart',
-        near(rak.review_adjustments_total, 1718.02), money(rak.review_adjustments_total));
-  check('RAK 9825 difference', near(rak.reconciliation_difference, 1718.02));
+  check('RAK 9825 reconciles', near(rak.reconciliation_difference, 0));
+  check('no unresolved adjustment counts toward any balance',
+        near(rak.review_adjustments_total, 0), money(rak.review_adjustments_total));
 
   const everyFigure = await q(client, `
       select source_balance v from card_balances
