@@ -6,6 +6,7 @@ import { ErrorState } from './components/ui'
 import { Dashboard } from './pages/Dashboard'
 import { Transactions } from './pages/Transactions'
 import { AddTransaction } from './pages/AddTransaction'
+import { Import } from './pages/Import'
 import { ReviewQueue } from './pages/ReviewQueue'
 import { Cards } from './pages/Cards'
 import { AddCard } from './pages/AddCard'
@@ -46,6 +47,7 @@ export function App() {
             <Route index element={<Dashboard />} />
             <Route path="transactions" element={<Transactions />} />
             <Route path="add" element={<AddTransaction />} />
+            <Route path="import" element={<Import />} />
             <Route path="review" element={<ReviewQueue />} />
             <Route path="cards" element={<Cards />} />
             <Route path="cards/new" element={<AddCard />} />

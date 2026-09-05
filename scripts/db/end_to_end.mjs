@@ -118,13 +118,28 @@ try {
       const start = await balance(card.id);
       console.log(`    balance before: ${money(start)} AED`);
 
-      await addTxn(card.id, { kind: 'purchase', amount: 2500, paymentRef: 'E2E-P1' });
+      const purchaseId = await addTxn(card.id, {
+        kind: 'purchase', amount: 2500, date: '2026-09-04', paymentRef: 'E2E-P1',
+      });
       const afterPurchase = await balance(card.id);
       check(
         'purchase DECREASES the balance, exactly once',
         near(afterPurchase, start - 2500),
         `${money(start)} -> ${money(afterPurchase)}`,
       );
+
+      // The date is what every report, filter and export sorts and groups by.
+      // A transaction stored under the wrong day is invisible to the month it
+      // belongs to.
+      const stored = (
+        await client.query(
+          `select to_char(txn_date, 'YYYY-MM-DD') as d, created_at, updated_at
+             from transactions where id = $1`,
+          [purchaseId],
+        )
+      ).rows[0];
+      check('the date is stored exactly as entered', stored.d === '2026-09-04', stored.d);
+      check('created_at is set', Boolean(stored.created_at));
 
       await addTxn(card.id, { kind: 'refund', amount: 2500, paymentRef: 'E2E-P1' });
       const afterRefund = await balance(card.id);

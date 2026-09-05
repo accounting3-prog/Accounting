@@ -32,6 +32,10 @@ scripts/db/verify.mjs    Three-way independent verification.
 scripts/db/simulate.mjs  Per-card transaction simulations, rolled back.
 scripts/db/restore_test.mjs  Backup and restore, column-for-column.
 scripts/db/rls_check.mjs Access-control proof.
+scripts/db/import_path.mjs   A parsed file -> the database, balances checked.
+scripts/export/          Builds the export workbooks and verifies them with openpyxl.
+scripts/import/          Reads the real workbook with the browser importer and
+                         compares it against extract.py, row for row.
 supabase/schema.sql      Schema, views, RLS policies.
 supabase/migrations/     Applied in numeric order after schema.sql.
 tests/test_ledger.py     35 tests over the extraction and balance math.
@@ -169,7 +173,99 @@ select id, email from auth.users where email = 'you@example.com';
 Run that in the Supabase SQL editor. After that, the app's admin can add further
 admins the same way. Everyone else who signs in is view-only, enforced by RLS.
 
-## Import, backup and restore
+## Exporting
+
+Three downloads, from the Transactions page:
+
+- **Export CSV** and **Export Excel** give exactly what is on screen — the
+  filtered, sorted result set, named after the search that produced it
+  (`REQ-11973-transactions.xlsx`).
+- **Export all, by card** gives one workbook with a Summary tab and then one tab
+  per card, holding every transaction on that card. It ignores the filters on
+  purpose: a file called *by card* that quietly held a subset would be a trap. A
+  card with no activity still gets its tab, so nothing looks forgotten.
+
+Amounts are written as numbers, never as formatted text, and dates as ISO text
+so sorting is unambiguous in every locale. No figure anywhere in these files
+adds different currencies together.
+
+To check the writer still produces workbooks Excel can open:
+
+```bash
+node scripts/export/build_workbooks.mjs /tmp/out && python scripts/export/verify_xlsx.py /tmp/out
+```
+
+The checker opens the files with openpyxl — a separate implementation of the
+format — so a pass means the file is genuinely valid, not merely readable by the
+code that wrote it.
+
+## Importing a sheet of new transactions
+
+The **Import** page takes an `.xlsx` or `.csv` in the same shape as the workbook
+sheets: a header row, then one transaction per row, with the amount in a DEBIT
+or a CREDIT column. Exporting a card gives a file in exactly this shape.
+
+Nothing is written until the whole file has been shown:
+
+1. **The file.** Headers are matched by name across the variants the workbook
+   actually uses; the header row is found by scoring, so it works whether it
+   sits on row 1 or row 4. A date column with no header at all is found by
+   reading the values in it.
+2. **The card.** This is what settles direction. The same word means opposite
+   things on different cards — on AMEX 4000 VPAY the DEBIT column *increases*
+   the balance, on MASTERCARD 6404 it *decreases* it — so the file is read using
+   the target card's own recorded convention, and the page says which way round
+   it is, in words, before anything is imported.
+3. **How it was read.** Column mapping and the day-first/month-first reading,
+   both overridable. `03/04/2026` is undecidable, so the whole column is
+   searched for a value that settles it; if nothing does, every affected row is
+   flagged with its raw text.
+4. **Review.** Every row with its date, amount, direction and any warning, and
+   the balance the card would end up with. Rows that look like transactions
+   already in the ledger are flagged and left unticked — one click puts them
+   back, because 217 rows in this workbook are genuine repeat charges.
+
+Each row is then written through `create_transaction`, one at a time — the same
+audited function the single-entry form uses. There is no bulk-insert path. A row
+carrying a warning is saved flagged for review rather than taken as final, and
+every imported row records the file and line it came from in its notes.
+
+Tests, most valuable first:
+
+```bash
+IMPORT_BUNDLE=/tmp/importFile.mjs node scripts/import/parity_test.mjs "2026 Cards Monitoring.xlsx"
+```
+
+Reads the real workbook with the browser importer and compares all 1,948 rows
+against what `scripts/extract.py` found — two implementations sharing no code,
+agreeing on every amount, direction and date.
+
+```bash
+LEDGER_DEPS=... IMPORT_BUNDLE=... node scripts/db/import_path.mjs
+```
+
+Carries parsed rows into the live database through `create_transaction` and
+checks the balance moved by exactly what the file said, inside a transaction
+that is rolled back.
+
+```bash
+EXPORT_BUNDLE=... IMPORT_BUNDLE=... node scripts/import/roundtrip_test.mjs
+```
+
+Exports and re-imports, and checks that a re-uploaded export is recognised as
+already in the ledger rather than doubling it.
+
+The importer is TypeScript importing `fflate`, so these need a bundle when the
+web workspace has no `node_modules`:
+
+```bash
+npx esbuild web/src/lib/importFile.ts --bundle --format=esm --platform=node --outfile=/tmp/importFile.mjs
+```
+
+## Loading the original workbook, backup and restore
+
+This is the one-off server-side load of `2026 Cards Monitoring.xlsx`, separate
+from the Import page above.
 
 **Always dry-run first.** It performs the full validation and reports exactly
 what would be inserted, skipped, flagged or rejected, and writes nothing:
@@ -283,3 +379,11 @@ Names are the workbook sheet names, verbatim.
 - **RAK 9825 row 26** (+1,718.02 AED) — is there a transaction around
   2026-03-16 that was never entered?
 - **18 rows flagged `needs_review`** — see the review queue in the app.
+- **RAK 9825 closing balance** — the ledger reconciles to **−1,552.78** using
+  the standard convention (Debit decreases, Credit increases), which is what
+  that sheet's own balance formula does. The replacement sheet you sent types
+  **−165.72**. The difference is that the new sheet's money-received rows
+  decrease the balance, which is backwards for a bank account. −1,552.78 is
+  applied; say the word if the other figure is the one you want.
+- **`RAK 9825 (6072)` vs `(6071)`** — is the newer number a renamed card or a
+  typo? Nothing has been renamed pending an answer.

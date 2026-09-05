@@ -14,7 +14,7 @@ import {
   labelClass,
 } from '../components/ui';
 import { formatCount, formatDateShort, formatRate } from '../lib/format';
-import { exportCsv, exportFilename, exportXlsx } from '../lib/export';
+import { exportCsv, exportFilename, exportXlsx, exportXlsxByCard } from '../lib/export';
 import { getCards, getTransactions } from '../lib/ledger';
 import {
   EMPTY_FILTERS,
@@ -86,6 +86,7 @@ export function Transactions() {
   const [selected, setSelected] = useState<Transaction | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [exported, setExported] = useState<string | null>(null);
+  const [exportedAll, setExportedAll] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
   const { reload, signedIn, source } = useLedgerState();
   const canEdit = signedIn && source === 'supabase';
@@ -159,17 +160,34 @@ export function Transactions() {
         <div className="flex items-center gap-1.5">
           <Button
             disabled={results.length === 0}
-            onClick={() => setExported(exportCsv(results, cards, filters.query, filters))}
+            onClick={() => {
+              setExported(exportCsv(results, cards, filters.query, filters));
+              setExportedAll(false);
+            }}
             title={`Download ${exportFilename(filters.query, filters, cards, 'csv')}`}
           >
             Export CSV
           </Button>
           <Button
             disabled={results.length === 0}
-            onClick={() => setExported(exportXlsx(results, cards, filters.query, filters))}
+            onClick={() => {
+              setExported(exportXlsx(results, cards, filters.query, filters));
+              setExportedAll(false);
+            }}
             title={`Download ${exportFilename(filters.query, filters, cards, 'xlsx')}`}
           >
             Export Excel
+          </Button>
+          <Button
+            disabled={all.length === 0}
+            onClick={() => {
+              const name = exportXlsxByCard(all, cards);
+              setExported(name);
+              setExportedAll(true);
+            }}
+            title="One workbook with every transaction, each card on its own sheet"
+          >
+            Export all, by card
           </Button>
         </div>
       </div>
@@ -177,8 +195,17 @@ export function Transactions() {
       {exported && (
         <p className="mb-3 text-[13px] text-ink-muted">
           Downloaded <span className="font-medium text-ink">{exported}</span> —{' '}
-          {formatCount(results.length)} transaction{results.length === 1 ? '' : 's'}, exactly
-          as filtered here.
+          {exportedAll ? (
+            <>
+              all {formatCount(all.length)} transactions, one sheet per card. This one
+              ignores the filters above on purpose.
+            </>
+          ) : (
+            <>
+              {formatCount(results.length)} transaction{results.length === 1 ? '' : 's'},
+              exactly as filtered here.
+            </>
+          )}
         </p>
       )}
 

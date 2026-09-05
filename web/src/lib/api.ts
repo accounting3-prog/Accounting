@@ -276,6 +276,12 @@ export interface NewTransaction {
   p_description?: string | null;
   p_notes?: string | null;
   p_needs_review?: boolean;
+  /**
+   * Lets a row through the two-minute duplicate guard. Only set where the
+   * duplicate was shown to a person and they said to import it anyway — the
+   * workbook holds 217 genuine repeat charges, so identical rows are real.
+   */
+  p_allow_duplicate?: boolean;
 }
 
 /**
