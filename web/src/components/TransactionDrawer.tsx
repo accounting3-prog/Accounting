@@ -348,8 +348,8 @@ function TransactionHistory({ transactionId }: { transactionId: string }) {
       </h3>
       {error ? (
         <p className="text-[13px] text-ink-muted">
-          {/42501|permission|admin/i.test(error)
-            ? 'Seeing who changed this row needs an admin session.'
+          {/42501|permission|owner|admin/i.test(error)
+            ? "Seeing who changed this row is limited to the owner."
             : error}
         </p>
       ) : rows === null ? (

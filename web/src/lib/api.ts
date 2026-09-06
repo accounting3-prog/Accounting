@@ -298,6 +298,8 @@ export interface AppUser {
   user_id: string;
   email: string;
   is_admin: boolean;
+  /** An owner also manages access and reads the history. */
+  is_owner: boolean;
   created_at: string;
   last_sign_in: string | null;
 }
@@ -337,11 +339,13 @@ export async function listAccessAudit(): Promise<
 export async function grantAdmin(
   email: string,
   rationale: string,
+  asOwner = false,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!supabase) return { ok: false, error: 'Not connected to Supabase.' };
   const { error } = await supabase.rpc('grant_admin', {
     p_email: email,
     p_rationale: rationale || null,
+    p_as_owner: asOwner,
   });
   if (error) return { ok: false, error: error.message };
   return { ok: true };
@@ -595,5 +599,36 @@ export async function listChecks(): Promise<
       amounts: (amt.data ?? []) as SuspectAmount[],
       rates: (rate.data ?? []) as SuspectRate[],
     },
+  };
+}
+
+/* --------------------------------------------------------- what I am allowed */
+
+export interface MyAccess {
+  /** Adds, edits, imports, resolves, adds cards. */
+  canWrite: boolean;
+  /** Manages access and reads the history. A strict subset of canWrite. */
+  canManage: boolean;
+  email: string | null;
+}
+
+/**
+ * What this account may do, asked once when the ledger loads.
+ *
+ * Used only to decide what is worth drawing. Every restriction it describes is
+ * enforced in the database by row-level security and by the functions
+ * themselves, so hiding a screen is a courtesy, never the protection — an
+ * editor who navigates straight to /access gets a refusal from Postgres, not
+ * from this flag.
+ */
+export async function getMyAccess(): Promise<MyAccess> {
+  if (!supabase) return { canWrite: false, canManage: false, email: null };
+  const { data, error } = await supabase.rpc('my_access');
+  if (error) return { canWrite: false, canManage: false, email: null };
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    canWrite: Boolean(row?.can_write),
+    canManage: Boolean(row?.can_manage),
+    email: (row?.email as string | null) ?? null,
   };
 }

@@ -11,9 +11,10 @@
  *   - It never says a row was deleted, because nothing can be. There is no
  *     delete path in the database; a row that should not count is voided, and
  *     that is a status change and appears here.
- *   - Reading it needs an admin session. That is enforced in the database, not
- *     here, so this page shows what the database returns — including its
- *     refusal, in plain words.
+ *   - Reading it is the owner's. That is enforced in the database, not here, so
+ *     an editor who navigates straight to this address gets nothing from the
+ *     query; the page says why rather than showing an empty feed that reads as
+ *     "nothing has happened yet".
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -30,6 +31,7 @@ import {
   fieldClass,
 } from '../components/ui';
 import { listActivity, type ActivityRow } from '../lib/api';
+import { useLedgerState } from '../components/LedgerProvider';
 
 const AREA_LABEL: Record<string, string> = {
   transaction: 'Transaction',
@@ -106,6 +108,7 @@ function Changes({ changes, action }: { changes: ActivityRow['changes']; action:
 }
 
 export function History() {
+  const { access } = useLedgerState();
   const [rows, setRows] = useState<ActivityRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [area, setArea] = useState<'all' | 'transaction' | 'card' | 'access'>('all');
@@ -143,16 +146,23 @@ export function History() {
       description="Every change, who made it and why. Nothing in this ledger can be deleted — a row that should not count is voided, and that shows here as a status change."
       actions={<Button onClick={load}>Refresh</Button>}
     >
-      {error ? (
+      {!access.canManage ? (
+        // Row-level security already returns nothing here, which would look
+        // like "nothing has happened yet" rather than "this is not yours".
+        <ErrorState
+          title="The history is the owner&rsquo;s"
+          detail="Your account can do everything else — add, edit, import and resolve. Reading who changed what is limited to the owner, and your own work is recorded here either way."
+        />
+      ) : error ? (
         <ErrorState
           title={
-            /42501|permission|admin/i.test(error)
-              ? 'The history is limited to admins'
+            /42501|permission|owner|admin/i.test(error)
+              ? "The history is the owner's"
               : 'Could not load the history'
           }
           detail={
-            /42501|permission|admin/i.test(error)
-              ? 'Your account can read the ledger. Seeing who changed what needs an admin session.'
+            /42501|permission|owner|admin/i.test(error)
+              ? 'Your account can do everything else — add, edit, import and resolve. Reading who changed what is limited to the owner, and your own work is recorded here either way.'
               : error
           }
           onRetry={load}

@@ -16,7 +16,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { loadLedger, type LedgerSource, type LoadFailure } from '../lib/api';
+import { getMyAccess, loadLedger, type LedgerSource, type LoadFailure, type MyAccess } from '../lib/api';
 import { setLedgerData } from '../lib/ledger';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { AuthChecking, SignInScreen, SignedOutBanner, useAuth } from './AuthGate';
@@ -33,6 +33,11 @@ interface LedgerState {
   reload: () => void;
   signedIn: boolean;
   signOut: () => void;
+  /**
+   * What this account may do. Decides what is worth drawing, never what is
+   * permitted — the database enforces that on its own.
+   */
+  access: MyAccess;
 }
 
 const Ctx = createContext<LedgerState | null>(null);
@@ -50,11 +55,23 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
   const [source, setSource] = useState<LedgerSource>('sample');
   const [failure, setFailure] = useState<LoadFailure | undefined>();
   const [version, setVersion] = useState(0);
+  const [access, setAccess] = useState<MyAccess>({
+    canWrite: false,
+    canManage: false,
+    email: null,
+  });
 
   const load = useCallback(async (signedIn: boolean) => {
     setStatus('loading');
     setFailure(undefined);
     const result = await loadLedger({ signedIn });
+    // Asked alongside the ledger rather than on each page, so a screen never
+    // renders before it knows whether to offer an action it cannot perform.
+    setAccess(
+      signedIn
+        ? await getMyAccess()
+        : { canWrite: false, canManage: false, email: null },
+    );
     setLedgerData(result.data);
     setSource(result.source);
     setFailure(result.failure);
@@ -79,6 +96,7 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
     reload: () => void load(signedIn),
     signedIn,
     signOut: auth.signOut,
+    access,
   };
 
   if (auth.status === 'checking') return <AuthChecking />;

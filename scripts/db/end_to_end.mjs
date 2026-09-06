@@ -524,9 +524,17 @@ try {
     // switches to, so the account is found with the role reset, then handed
     // back before anything is read.
     await client.query('reset role');
-    const viewer = (await q(client,
+    let viewer = (await q(client,
       `select id from auth.users where id not in (select user_id from admins) limit 1`))[0];
-    if (!viewer) { check('a non-admin account exists to test with', false); return; }
+    // Every real account has write access, so a read-only one is created here
+    // and rolled back with the rest of the scenario. Without this the check
+    // would quietly stop testing anything the day the last viewer is promoted.
+    if (!viewer) {
+      viewer = (await q(client,
+        `insert into auth.users (id, email) values (gen_random_uuid(), 'e2e-viewer@example.test')
+         returning id`))[0];
+    }
+    if (!viewer) { check('a read-only account exists to test with', false); return; }
 
     await client.query('set local role authenticated');
     await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [viewer.id]);
@@ -539,6 +547,133 @@ try {
 
     const corrections = await q(client, 'select count(*)::int n from transaction_corrections');
     check('and so does the table under it', corrections[0].n === 0, `${corrections[0].n} rows`);
+  });
+
+  /* ============================================ 3d. an editor versus the owner */
+
+  console.log('\n\n3d. AN EDITOR DOES THE WORK; THE OWNER KEEPS THE KEYS');
+  console.log('-'.repeat(94));
+
+  await scenario(async () => {
+    await client.query('reset role');
+    const editor = (await q(client,
+      `select user_id from admins where not is_owner limit 1`))[0];
+    const owner = (await q(client, `select user_id from admins where is_owner limit 1`))[0];
+    check('there is an owner', Boolean(owner));
+    if (!editor) { check('there is an editor to test with', false); return; }
+
+    await client.query('set local role authenticated');
+    await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [editor.user_id]);
+
+    // What an editor must be able to do: all of the actual work.
+    const [me] = await q(client, 'select * from my_access()');
+    check('an editor is told it may write', me.can_write === true, String(me.can_write));
+    check('and told it may not manage', me.can_manage === false, String(me.can_manage));
+
+    const card = cards[0];
+    const before = await balance(card.id);
+    const id = await addTxn(card.id, {
+      kind: 'purchase', amount: 750, date: '2026-09-02', paymentRef: 'EDITOR-1',
+      supplier: 'EDITOR TEST SUPPLIER',
+    });
+    check('an editor can add a transaction', Boolean(id));
+    check('and it moves the balance', !near(await balance(card.id), before));
+
+    await client.query(
+      `select update_transaction(p_id := $1, p_rationale := $2, p_amount_aed := 800)`,
+      [id, 'editor correcting the figure'],
+    );
+    const [edited] = await q(client, 'select amount_aed::numeric a from transactions where id = $1', [id]);
+    check('an editor can edit one', near(edited.a, -800), String(edited.a));
+
+    const newCard = (await client.query(
+      `select create_card('EDITOR CARD 7777', 0, '2026-06-01', 'Credit card', 'active',
+                          'AED', null, '7777', null, null) as id`)).rows[0].id;
+    check('an editor can add a card', Boolean(newCard));
+
+    // What an editor must NOT be able to do.
+    const feed = await q(client, 'select count(*)::int n from activity_log');
+    check('an editor cannot read the history', feed[0].n === 0, `${feed[0].n} entries`);
+
+    const audit = await q(client, 'select count(*)::int n from admin_audit');
+    check('nor the record of who has access', audit[0].n === 0, `${audit[0].n} rows`);
+
+    const cardAudit = await q(client, 'select count(*)::int n from card_audit');
+    check('nor the record of card changes', cardAudit[0].n === 0, `${cardAudit[0].n} rows`);
+
+    const visible = await q(client, 'select count(*)::int n from admins');
+    check('nor who else can write, beyond their own row',
+          visible[0].n === 1, `${visible[0].n} rows`);
+
+    // Their work is still recorded — that is the point of them not reading it.
+    await client.query('reset role');
+    await client.query('set local role authenticated');
+    await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [owner.user_id]);
+    const trail = await q(client,
+      `select action, actor from activity_log where transaction_id = $1 order by created_at`, [id]);
+    check('the owner sees what the editor did', trail.length === 2,
+          trail.map((r) => r.action).join(', '));
+    check('attributed to the editor by name',
+          trail.every((r) => /@/.test(r.actor)), trail[0]?.actor);
+  });
+
+  // Each refusal gets its own transaction: a raised exception poisons the one
+  // it happened in, and every statement after it would fail for that reason
+  // rather than for the reason under test.
+  const asEditor = async (label, fn) =>
+    scenario(async () => {
+      await client.query('reset role');
+      const editor = (await q(client, 'select user_id from admins where not is_owner limit 1'))[0];
+      if (!editor) { check(label, false, 'no editor account'); return; }
+      await client.query('set local role authenticated');
+      await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [editor.user_id]);
+      await expectRefused(label, () => fn(editor));
+    });
+
+  await asEditor('an editor listing the accounts', () =>
+    client.query('select * from list_app_users()'));
+  await asEditor('an editor giving someone access', () =>
+    client.query(`select grant_admin('accounting5@luxuryexplorersme.com', 'trying it on')`));
+  await asEditor('an editor making themselves an owner', (editor) =>
+    client.query(`select grant_admin($1, 'trying it on', true)`, [editor.user_id]));
+  await asEditor("an editor taking an owner's access away", async () => {
+    await client.query('reset role');
+    const owner = (await q(client, 'select user_id from admins where is_owner limit 1'))[0];
+    await client.query('set local role authenticated');
+    const editor = (await q(client, 'select user_id from admins where not is_owner limit 1'))[0];
+    await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [editor.user_id]);
+    return client.query('select revoke_admin($1)', [owner.user_id]);
+  });
+  // Not expectRefused: row-level security answers an update that matches no
+  // visible row by changing nothing rather than by raising, so what is checked
+  // is that the editor is still an editor afterwards.
+  await scenario(async () => {
+    await client.query('reset role');
+    const editor = (await q(client, 'select user_id from admins where not is_owner limit 1'))[0];
+    if (!editor) { check('an editor promoting themselves changes nothing', false); return; }
+    await client.query('set local role authenticated');
+    await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [editor.user_id]);
+
+    const r = await client.query(
+      'update admins set is_owner = true where user_id = $1', [editor.user_id]);
+    check('an editor writing straight into the admins table changes nothing',
+          r.rowCount === 0, `${r.rowCount} rows changed`);
+
+    const [{ can_manage }] = await q(client, 'select * from my_access()');
+    check('and they are still an editor afterwards', can_manage === false, String(can_manage));
+  });
+
+  await scenario(async () => {
+    // The last owner cannot be removed: the lockout would be silent and
+    // unrecoverable, since only an owner can create another one.
+    await client.query('reset role');
+    const owners = await q(client, 'select user_id from admins where is_owner');
+    check('there is exactly one owner to test the guard with', owners.length === 1,
+          `${owners.length} owners`);
+    await client.query('set local role authenticated');
+    await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [owners[0].user_id]);
+    await expectRefused('removing the only owner', () =>
+      client.query('select revoke_admin($1)', [owners[0].user_id]));
   });
 
   /* ================================================== 4. what must be refused */

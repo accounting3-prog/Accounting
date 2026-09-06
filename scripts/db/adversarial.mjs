@@ -123,13 +123,18 @@ try {
       /search_path=/.test(f.config ?? ''),
       f.config ?? 'NO search_path — resolves through the caller\'s path',
     );
-    // Every definer function that writes must check the caller.
+    // Every definer function that writes must check the caller. is_owner() also
+    // satisfies this and is strictly stronger — it is `in admins AND is_owner`,
+    // so anything it admits is_admin() would admit too. The access-management
+    // functions use it, and demanding the weaker check by name would be asking
+    // them to loosen.
     const writes = /insert into|update |delete from/i.test(f.def);
+    const guarded = /is_admin\(\)|is_owner\(\)/.test(f.def);
     if (writes)
       check(
-        `${f.proname} checks is_admin() before writing`,
-        /is_admin\(\)/.test(f.def),
-        /is_admin\(\)/.test(f.def) ? '' : 'WRITES WITHOUT AN AUTHORISATION CHECK',
+        `${f.proname} checks who is calling before writing`,
+        guarded,
+        guarded ? '' : 'WRITES WITHOUT AN AUTHORISATION CHECK',
       );
   }
 

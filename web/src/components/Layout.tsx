@@ -3,6 +3,12 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { getTotals } from '../lib/ledger';
 import { useDataSourceLabel, useLedgerState } from './LedgerProvider';
 
+/**
+ * `owner: true` marks a screen only the owner can use. Hiding it is a courtesy
+ * — the database refuses an editor who types the address directly — but a menu
+ * offering something that will be refused is a menu that teaches people to
+ * ignore it.
+ */
 const NAV = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/transactions', label: 'Transactions' },
@@ -11,17 +17,19 @@ const NAV = [
   { to: '/add', label: 'Add transaction' },
   { to: '/import', label: 'Import' },
   { to: '/checks', label: 'Checks' },
-  { to: '/history', label: 'History' },
-  { to: '/access', label: 'Access' },
+  { to: '/history', label: 'History', owner: true },
+  { to: '/access', label: 'Access', owner: true },
 ];
 
 function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   const totals = getTotals();
   const openReviews = totals.needsReview + totals.excluded;
+  const { access } = useLedgerState();
+  const items = NAV.filter((item) => !item.owner || access.canManage);
 
   return (
     <nav className="flex flex-col gap-0.5">
-      {NAV.map((item) => (
+      {items.map((item) => (
         <NavLink
           key={item.to}
           to={item.to}

@@ -106,9 +106,9 @@ export function Access() {
   if (!connected) {
     return (
       <Page title="Access">
-        <Notice tone="review" title="This screen needs an admin session">
+        <Notice tone="review" title="This screen needs an owner session">
           Managing who can change the ledger is itself a change to the ledger, so
-          it needs a signed-in admin account and a live connection.
+          it needs the owner account and a live connection.
         </Notice>
       </Page>
     );
@@ -120,15 +120,15 @@ export function Access() {
   return (
     <Page
       title="Access"
-      description="Everyone who signs in can read the whole ledger. Only the people named here can change it."
+      description="Everyone who signs in can read the whole ledger. Editors can change it. The owner can also manage this screen and read the history."
       actions={<Button onClick={() => void load()}>Refresh</Button>}
     >
       {loadError ? (
         <ErrorState
           title="Could not read the access list"
           detail={
-            loadError.includes('42501') || /admin/i.test(loadError)
-              ? 'Listing accounts is limited to admins. Your account can read the ledger but not manage access.'
+            loadError.includes('42501') || /owner|admin/i.test(loadError)
+              ? 'Managing access is limited to the owner. Your account can do everything else — add, edit, import and resolve — but cannot see or change who has access.'
               : loadError
           }
           onRetry={() => void load()}
@@ -142,7 +142,7 @@ export function Access() {
           <div className="space-y-5">
             <Panel
               title="Can make changes"
-              description="Add cards, add transactions, resolve review items, and manage access."
+              description="Add cards, add transactions, import a sheet and resolve review items. An owner can also manage this screen and read the history."
             >
               {admins.length === 0 ? (
                 <EmptyState title="Nobody has write access" />
@@ -155,7 +155,9 @@ export function Access() {
                           <span className="truncate text-[13px] font-medium text-ink">
                             {u.email}
                           </span>
-                          <Tag tone="accent">Admin</Tag>
+                          <Tag tone={u.is_owner ? 'review' : 'accent'}>
+                            {u.is_owner ? 'Owner' : 'Editor'}
+                          </Tag>
                         </div>
                         <div className="mt-0.5 text-xs text-ink-muted">
                           Last signed in {when(u.last_sign_in)}
@@ -163,10 +165,13 @@ export function Access() {
                       </div>
                       <Button
                         variant="danger"
-                        disabled={busy === u.user_id || admins.length <= 1}
+                        disabled={
+                          busy === u.user_id ||
+                          (u.is_owner && admins.filter((a) => a.is_owner).length <= 1)
+                        }
                         title={
-                          admins.length <= 1
-                            ? 'The only admin cannot be removed — grant access to someone else first'
+                          u.is_owner && admins.filter((a) => a.is_owner).length <= 1
+                            ? 'The only owner cannot be removed — make someone else an owner first'
                             : undefined
                         }
                         onClick={() => void doRevoke(u)}
