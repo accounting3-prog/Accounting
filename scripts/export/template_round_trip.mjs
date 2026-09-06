@@ -292,6 +292,23 @@ for (const { label, card: c } of scenarios) {
     String(c.ledgerBalance),
   );
 
+  // A formula with no cached result and no instruction to recalculate opens in
+  // Excel looking like the formulas are missing, which is exactly how this was
+  // first reported. Both halves are checked.
+  const formulaCells = [...xml.matchAll(/<c r="([A-Z]+\d+)"[^>]*>(<f>[^<]*<\/f>[\s\S]*?)<\/c>/g)];
+  const withoutValue = formulaCells.filter(([, , body]) => !/<v>[-\d.]+<\/v>/.test(body));
+  check(
+    `all ${formulaCells.length} balance formulas carry a cached result`,
+    formulaCells.length > 0 && withoutValue.length === 0,
+    withoutValue.length ? `${withoutValue.length} without one, e.g. ${withoutValue[0][1]}` : '',
+  );
+  const workbookXml = strFromU8(zip['xl/workbook.xml']);
+  check(
+    'the workbook tells Excel to recalculate on open',
+    /fullCalcOnLoad="1"/.test(workbookXml),
+    workbookXml.includes('calcPr') ? 'calcPr present' : 'no calcPr at all',
+  );
+
   const expected =
     c.balanceSign === -1
       ? `${B}${FIRST_BLANK - 1}+${S}${FIRST_BLANK}-${R}${FIRST_BLANK}`

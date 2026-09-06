@@ -7,12 +7,13 @@
  * that any figure on screen can be traced back to the cell it came from.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { formatDate, formatRate, humanise } from '../lib/format';
 import { REVIEW_KIND_LABEL, findDuplicateCandidates, reviewKind } from '../lib/ledger';
 import { currencyName } from '../lib/currencies';
 import type { Card, Transaction } from '../lib/types';
 import { Money, Notice, StatusPill, Tag } from './ui';
+import { listTransactionHistory, type ActivityRow } from '../lib/api';
 
 function Row({
   label,
@@ -288,6 +289,8 @@ export function TransactionDrawer({
             </Row>
           </dl>
 
+          <TransactionHistory transactionId={t.id} />
+
           <h3 className="mb-1 mt-5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
             Attachments
           </h3>
@@ -299,5 +302,99 @@ export function TransactionDrawer({
         </div>
       </aside>
     </div>
+  );
+}
+
+/**
+ * How this row came to say what it says.
+ *
+ * Loaded on demand rather than with the ledger: it is one row's worth of
+ * history, only wanted when someone opens the row, and asking for it up front
+ * for two thousand transactions would be a page of wasted queries.
+ *
+ * A viewer without an admin session gets a refusal from the database rather
+ * than a silent blank, and that is shown as what it is.
+ */
+function TransactionHistory({ transactionId }: { transactionId: string }) {
+  const [rows, setRows] = useState<ActivityRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setRows(null);
+    setError(null);
+    listTransactionHistory(transactionId).then((r) => {
+      if (!live) return;
+      if (r.ok) setRows(r.rows);
+      else setError(r.error);
+    });
+    return () => {
+      live = false;
+    };
+  }, [transactionId]);
+
+  const label: Record<string, string> = {
+    created: 'Added',
+    annotated: 'Edited',
+    status_changed: 'Status changed',
+    superseded: 'Replaced',
+    linked: 'Linked',
+  };
+
+  return (
+    <>
+      <h3 className="mb-1 mt-5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+        History
+      </h3>
+      {error ? (
+        <p className="text-[13px] text-ink-muted">
+          {/42501|permission|admin/i.test(error)
+            ? 'Seeing who changed this row needs an admin session.'
+            : error}
+        </p>
+      ) : rows === null ? (
+        <p className="text-[13px] text-ink-faint">Reading the history…</p>
+      ) : rows.length === 0 ? (
+        <p className="text-[13px] text-ink-muted">
+          Imported from the workbook, and unchanged since. Nothing has been edited on this
+          row.
+        </p>
+      ) : (
+        <ol className="space-y-2">
+          {rows.map((r, i) => (
+            <li key={`${r.created_at}-${i}`} className="text-[13px]">
+              <div className="flex flex-wrap items-baseline gap-x-1.5">
+                <span className="font-medium text-ink">{label[r.action] ?? r.action}</span>
+                <span className="text-ink-muted">by {r.actor}</span>
+                <span className="text-xs text-ink-faint">
+                  {new Date(r.created_at).toLocaleString('en-GB', {
+                    day: '2-digit',
+                    month: 'short',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </span>
+              </div>
+              {r.rationale && <p className="text-ink-muted">{r.rationale}</p>}
+              {r.changes && r.action !== 'created' && (
+                <ul className="mt-0.5 space-y-0.5 text-xs text-ink-muted">
+                  {Object.entries(r.changes as Record<string, { from?: unknown; to?: unknown }>)
+                    .filter(([, v]) => v && typeof v === 'object' && ('from' in v || 'to' in v))
+                    .map(([field, v]) => (
+                      <li key={field} className="tnum">
+                        {field.replace(/_/g, ' ')}:{' '}
+                        <span className="line-through">{String(v.from ?? '—')}</span>{' '}
+                        <span className="text-ink-faint">to</span>{' '}
+                        <span className="font-medium text-ink">{String(v.to ?? '—')}</span>
+                      </li>
+                    ))}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </>
   );
 }

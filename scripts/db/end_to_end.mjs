@@ -449,6 +449,98 @@ try {
                             'AED', null, null, null, null, 0::smallint)`,
       )));
 
+  /* ================================================ 3c. the history of a row */
+
+  console.log('\n\n3c. EVERY CHANGE IS RECORDED, AND ONLY AN ADMIN CAN READ IT');
+  console.log('-'.repeat(94));
+
+  await scenario(async () => {
+    const target = cards[0];
+
+    // Adding.
+    const id = await addTxn(target.id, {
+      kind: 'purchase', amount: 4321, date: '2026-09-01', paymentRef: 'HIST-1',
+      supplier: 'HISTORY TEST SUPPLIER',
+    });
+    let history = await q(
+      client,
+      `select action, actor, rationale, changes, from_status, to_status
+         from activity_log where transaction_id = $1 order by created_at`,
+      [id],
+    );
+    check('adding a transaction is recorded', history.length === 1, `${history.length} entries`);
+    check('the entry says it was created', history[0]?.action === 'created', history[0]?.action);
+    check('and names who did it', /@/.test(history[0]?.actor ?? ''), history[0]?.actor);
+    check(
+      'the created entry carries the figures the row was entered with',
+      Number(history[0]?.changes?.amount_aed) === -4321 &&
+        history[0]?.changes?.txn_date === '2026-09-01',
+      JSON.stringify(history[0]?.changes),
+    );
+
+    // Editing.
+    await client.query(
+      `select update_transaction(p_id := $1, p_rationale := $2, p_amount_aed := 5000)`,
+      [id, 'the receipt says 5,000'],
+    );
+    history = await q(
+      client,
+      `select action, rationale, changes from activity_log
+        where transaction_id = $1 order by created_at`,
+      [id],
+    );
+    check('editing adds a second entry, it does not replace the first',
+          history.length === 2, `${history.length} entries`);
+    check('the edit records what the figure was and what it became',
+          Number(history[1]?.changes?.amount_aed?.from) === -4321 &&
+            Number(history[1]?.changes?.amount_aed?.to) === -5000,
+          JSON.stringify(history[1]?.changes?.amount_aed));
+    check('and why', history[1]?.rationale === 'the receipt says 5,000', history[1]?.rationale);
+
+    // The history is append-only, like the table under it. There is no delete
+    // or update policy on it, and row-level security answers a statement with
+    // no policy by matching no rows rather than by raising — so what is checked
+    // is that nothing moved, which is the thing that actually matters.
+    const del = await client.query(
+      'delete from transaction_corrections where transaction_id = $1', [id]);
+    check('deleting a history entry removes nothing', del.rowCount === 0,
+          `${del.rowCount} rows deleted`);
+    const upd = await client.query(
+      `update transaction_corrections set rationale = 'something else'
+        where transaction_id = $1`, [id]);
+    check('rewriting a history entry changes nothing', upd.rowCount === 0,
+          `${upd.rowCount} rows changed`);
+
+    const still = await q(client,
+      'select count(*)::int n from activity_log where transaction_id = $1', [id]);
+    check('both entries survived the attempts', still[0].n === 2, `${still[0].n}`);
+  });
+
+  await scenario(async () => {
+    // A viewer may read the ledger and not the history. That is the whole point
+    // of narrowing it, so it is checked from a viewer's session, not asserted.
+    //
+    // auth.users is not readable by the authenticated role that scenario()
+    // switches to, so the account is found with the role reset, then handed
+    // back before anything is read.
+    await client.query('reset role');
+    const viewer = (await q(client,
+      `select id from auth.users where id not in (select user_id from admins) limit 1`))[0];
+    if (!viewer) { check('a non-admin account exists to test with', false); return; }
+
+    await client.query('set local role authenticated');
+    await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [viewer.id]);
+
+    const readable = await q(client, 'select count(*)::int n from transactions');
+    check('a viewer can still read the ledger', readable[0].n > 0, `${readable[0].n} rows`);
+
+    const feed = await q(client, 'select count(*)::int n from activity_log');
+    check('but the history reads as empty for them', feed[0].n === 0, `${feed[0].n} entries`);
+
+    const corrections = await q(client, 'select count(*)::int n from transaction_corrections');
+    check('and so does the table under it', corrections[0].n === 0, `${corrections[0].n} rows`);
+  });
+
   /* ================================================== 4. what must be refused */
 
   console.log('\n\n4. WHAT THE SYSTEM MUST REFUSE');

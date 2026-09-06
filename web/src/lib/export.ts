@@ -211,6 +211,18 @@ const colName = (i: number): string => {
  */
 export interface FormulaCell {
   formula: string;
+  /**
+   * The result, cached.
+   *
+   * Excel is entitled to show a formula cell as blank until it recalculates,
+   * and a file written with no cached results and no instruction to recalculate
+   * opens looking like the formulas are missing. Both halves are needed: the
+   * value below, so the number is there the instant the file opens and in
+   * viewers that never calculate at all (a Drive preview, a phone), and
+   * fullCalcOnLoad in the workbook, so Excel replaces it with a real
+   * calculation as soon as it has one.
+   */
+  value?: number;
 }
 export type Cell = string | number | null | FormulaCell;
 
@@ -228,7 +240,13 @@ function sheetXml(
         .map((value, c) => {
           const ref = `${colName(c)}${r + 1}`;
           if (isFormula(value))
-            return `<c r="${ref}" s="1"><f>${xmlEscape(value.formula)}</f></c>`;
+            return (
+              `<c r="${ref}" s="1"><f>${xmlEscape(value.formula)}</f>` +
+              (typeof value.value === 'number' && Number.isFinite(value.value)
+                ? `<v>${value.value}</v>`
+                : '') +
+              `</c>`
+            );
           if (value === null || value === undefined || value === '') return '';
           if (typeof value === 'number' && Number.isFinite(value))
             return `<c r="${ref}" s="${r === headerRowIndex ? 2 : 1}"><v>${value}</v></c>`;
@@ -344,6 +362,7 @@ ${overrides.join('\n')}
   files['xl/workbook.xml'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
 <sheets>${sheetTags.join('')}</sheets>
+<calcPr calcId="191029" fullCalcOnLoad="1"/>
 </workbook>`);
 
   files['xl/_rels/workbook.xml.rels'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -633,10 +652,16 @@ export function buildCardTemplate(card: Card, blankRows = TEMPLATE_BLANK_ROWS): 
     // Written the way the workbook writes it — `=G5-D6+E6` — rather than
     // wrapped in N() or IF(). Excel treats an empty cell as zero here, and a
     // formula that matches the source sheets is one an accountant can read.
-    row[iBalance] =
-      card.balanceSign === -1
-        ? { formula: `${prev}+${S}${r}-${R}${r}` }
-        : { formula: `${prev}-${S}${r}+${R}${r}` };
+    // The cached result of an untouched row is the opening balance, since every
+    // amount above it is still empty. It is replaced the moment Excel opens the
+    // file and recalculates, and the moment anyone types an amount.
+    row[iBalance] = {
+      formula:
+        card.balanceSign === -1
+          ? `${prev}+${S}${r}-${R}${r}`
+          : `${prev}-${S}${r}+${R}${r}`,
+      value: card.ledgerBalance,
+    };
     rows.push(row);
   }
 

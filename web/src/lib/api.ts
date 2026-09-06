@@ -469,3 +469,131 @@ export async function submitTransaction(
   if (error) return { ok: false, error: error.message };
   return { ok: true, id: String(data) };
 }
+
+/* -------------------------------------------------- history and the checks */
+
+export interface ActivityRow {
+  created_at: string;
+  area: 'transaction' | 'card' | 'access';
+  action: string;
+  actor: string;
+  card_name: string | null;
+  transaction_id: string | null;
+  subject: string;
+  amount_aed: string | number | null;
+  txn_date: string | null;
+  rationale: string;
+  note: string | null;
+  changes: Record<string, { from?: unknown; to?: unknown } | unknown> | null;
+  from_status: string | null;
+  to_status: string | null;
+}
+
+/**
+ * Everything that has been done, newest first.
+ *
+ * Reading this needs an admin session — the view is subject to the reader's own
+ * policies, and the history was narrowed to admins deliberately. A viewer who
+ * can read the ledger gets a refusal here, which is the intended answer and is
+ * reported as such rather than as a failure.
+ */
+export async function listActivity(
+  limit = 400,
+): Promise<{ ok: true; rows: ActivityRow[] } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not connected to Supabase.' };
+  const { data, error } = await supabase
+    .from('activity_log')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, rows: (data ?? []) as ActivityRow[] };
+}
+
+/** The history of one transaction, oldest first — how it came to say what it says. */
+export async function listTransactionHistory(
+  transactionId: string,
+): Promise<{ ok: true; rows: ActivityRow[] } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not connected to Supabase.' };
+  const { data, error } = await supabase
+    .from('activity_log')
+    .select('*')
+    .eq('transaction_id', transactionId)
+    .order('created_at', { ascending: true });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, rows: (data ?? []) as ActivityRow[] };
+}
+
+export interface DuplicateGroup {
+  card_id: string;
+  card_name: string;
+  txn_date_text: string;
+  amount_aed: string | number;
+  supplier: string;
+  payment_ref: string;
+  copies: number;
+  transaction_ids: string[];
+  source_rows: number[];
+  distinct_sources: number;
+  amount_at_risk: string | number;
+  entered_separately: boolean;
+}
+
+export interface SuspectAmount {
+  transaction_id: string;
+  card_name: string;
+  txn_date: string;
+  supplier: string;
+  amount_aed: string | number;
+  compare_with_id: string;
+  compare_with_date: string;
+  compare_with_amount: string | number;
+  factor: number;
+  same_day: boolean;
+  days_apart: number;
+  currency: string | null;
+  source_sheet: string | null;
+  source_row: number | null;
+}
+
+export interface SuspectRate {
+  transaction_id: string;
+  card_name: string;
+  txn_date: string;
+  supplier: string;
+  currency: string;
+  original_amount: string | number;
+  amount_aed: string | number;
+  settled_rate: string | number;
+  usual_rate: string | number;
+  times_usual: string | number;
+  comparable_rows: number;
+}
+
+export interface ChecksResult {
+  duplicates: DuplicateGroup[];
+  amounts: SuspectAmount[];
+  rates: SuspectRate[];
+}
+
+/** The three standing checks, run on read. Nothing here changes anything. */
+export async function listChecks(): Promise<
+  { ok: true; checks: ChecksResult } | { ok: false; error: string }
+> {
+  if (!supabase) return { ok: false, error: 'Not connected to Supabase.' };
+  const [dup, amt, rate] = await Promise.all([
+    supabase.from('possible_duplicates').select('*').order('amount_at_risk', { ascending: false }),
+    supabase.from('suspect_amounts').select('*'),
+    supabase.from('suspect_rates').select('*'),
+  ]);
+  const failed = [dup.error, amt.error, rate.error].find(Boolean);
+  if (failed) return { ok: false, error: failed.message };
+  return {
+    ok: true,
+    checks: {
+      duplicates: (dup.data ?? []) as DuplicateGroup[],
+      amounts: (amt.data ?? []) as SuspectAmount[],
+      rates: (rate.data ?? []) as SuspectRate[],
+    },
+  };
+}
