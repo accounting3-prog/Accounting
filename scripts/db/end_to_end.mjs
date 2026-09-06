@@ -93,7 +93,12 @@ try {
   if (!admin.length) throw new Error(`${OWNER} is not an admin`);
   uid = admin[0].user_id;
 
-  const cards = await q(client, 'select id, name from cards order by name');
+  // balance_sign comes along because a purchase does not move every card's
+  // balance the same way: six sheets write an available balance, RAK 9825
+  // writes what has been drawn. The assertions below use each card's own rule
+  // rather than assuming one of them.
+  const cards = await q(client,
+    'select id, name, balance_sign::int as sign from cards order by name');
   const snapshot = {
     transactions: (await q(client, 'select count(*)::int n from transactions'))[0].n,
     cards: (await q(client, 'select count(*)::int n from cards'))[0].n,
@@ -118,14 +123,27 @@ try {
       const start = await balance(card.id);
       console.log(`    balance before: ${money(start)} AED`);
 
+      // How this card's own statement moves. On six cards a purchase lowers
+      // the balance; on RAK 9825 it raises it, because that balance counts
+      // what has been drawn. The direction stored is 'spend' either way, and
+      // that is checked separately below.
+      const sign = card.sign;
+      const spendWord = sign === 1 ? 'DECREASES' : 'INCREASES';
+      const inWord = sign === 1 ? 'INCREASES' : 'DECREASES';
+
       const purchaseId = await addTxn(card.id, {
         kind: 'purchase', amount: 2500, date: '2026-09-04', paymentRef: 'E2E-P1',
       });
       const afterPurchase = await balance(card.id);
       check(
-        'purchase DECREASES the balance, exactly once',
-        near(afterPurchase, start - 2500),
+        `purchase ${spendWord} the balance, exactly once`,
+        near(afterPurchase, start + sign * -2500),
         `${money(start)} -> ${money(afterPurchase)}`,
+      );
+      check(
+        'and it is recorded as spending whichever way the balance moved',
+        (await client.query('select direction, amount_aed from transactions where id = $1',
+                            [purchaseId])).rows[0].direction === 'spend',
       );
 
       // The date is what every report, filter and export sorts and groups by.
@@ -144,8 +162,8 @@ try {
       await addTxn(card.id, { kind: 'refund', amount: 2500, paymentRef: 'E2E-P1' });
       const afterRefund = await balance(card.id);
       check(
-        'refund INCREASES the balance, exactly once',
-        near(afterRefund, afterPurchase + 2500),
+        `refund ${inWord} the balance, exactly once`,
+        near(afterRefund, afterPurchase + sign * 2500),
         `${money(afterPurchase)} -> ${money(afterRefund)}`,
       );
       check('refund reverses the purchase exactly', near(afterRefund, start));
@@ -164,16 +182,16 @@ try {
       await addTxn(card.id, { kind: 'funding', amount: 10000, paymentRef: 'E2E-F1' });
       const afterFunding = await balance(card.id);
       check(
-        'funding INCREASES the balance',
-        near(afterFunding, afterRefund + 10000),
+        `funding ${inWord} the balance`,
+        near(afterFunding, afterRefund + sign * 10000),
         `${money(afterRefund)} -> ${money(afterFunding)}`,
       );
 
       await addTxn(card.id, { kind: 'fee', amount: 75, paymentRef: 'E2E-FEE' });
       const afterFee = await balance(card.id);
       check(
-        'fee DECREASES the balance',
-        near(afterFee, afterFunding - 75),
+        `fee ${spendWord} the balance`,
+        near(afterFee, afterFunding + sign * -75),
         `${money(afterFunding)} -> ${money(afterFee)}`,
       );
     });
@@ -213,7 +231,10 @@ try {
         near(row.original_amount, original) &&
         near(row.exchange_rate, rate, 1e-6) &&
         near(Math.abs(row.amount_aed), settled) &&
-        near(afterFx, start - settled);
+        // Signed as spending on every card; the balance then moves the way
+        // this card's own statement moves.
+        Number(row.amount_aed) < 0 &&
+        near(afterFx, start + card.sign * -settled);
       check(
         `${card.name.slice(0, 26).padEnd(26)} FX purchase stores and deducts correctly`,
         ok,
@@ -360,6 +381,73 @@ try {
     check('reading the balance 5x never drifts', reads.every((v) => near(v, reads[0])),
           `all ${money(reads[0])}`);
   });
+
+  /* ============================ 3b. a card whose balance counts money drawn */
+
+  console.log('\n\n3b. A CARD WHOSE STATEMENT COUNTS WHAT HAS BEEN DRAWN');
+  console.log('-'.repeat(94));
+
+  await scenario(async () => {
+    // RAK 9825's statement works this way: a purchase raises the figure and a
+    // payment lowers it, because the figure is what has been drawn on the card
+    // rather than what is left on it. The risk in supporting that is flipping
+    // the transactions themselves, which would corrupt every spend report in
+    // the system. This proves the balance moves and the reporting does not.
+    const drawnId = (
+      await client.query(
+        `select create_card('E2E DRAWN CARD 8888', 0, '2026-06-01', 'Credit card',
+                            'active', 'AED', 'Test Bank', '8888', null,
+                            'created by the end-to-end test', -1::smallint) as id`,
+      )
+    ).rows[0].id;
+    check('a card can be created with the drawn convention', Boolean(drawnId));
+
+    const [row] = await q(client, 'select balance_sign::int s from cards where id = $1', [drawnId]);
+    check('the convention is stored on the card', row.s === -1, String(row.s));
+    check('it opens at its opening balance', near(await balance(drawnId), 0));
+
+    await addTxn(drawnId, { kind: 'purchase', amount: 1000, date: '2026-07-01',
+                            paymentRef: 'DR-1' });
+    const afterBuy = await balance(drawnId);
+    check('a purchase RAISES the balance on this card', near(afterBuy, 1000),
+          `${money(afterBuy)} AED`);
+
+    await addTxn(drawnId, { kind: 'funding', amount: 1200, date: '2026-07-02',
+                            paymentRef: 'DR-2' });
+    const afterPay = await balance(drawnId);
+    check('a payment LOWERS it, past zero into credit', near(afterPay, -200),
+          `${money(afterPay)} AED`);
+
+    // The point of the whole design: the rows themselves are untouched.
+    const stored = await q(
+      client,
+      `select direction, amount_aed::numeric a from transactions
+        where card_id = $1 order by txn_date`,
+      [drawnId],
+    );
+    check('the purchase is still stored as spending, and still negative',
+          stored[0].direction === 'spend' && Number(stored[0].a) === -1000,
+          `${stored[0].direction} ${stored[0].a}`);
+    check('the payment is still stored as funding, and still positive',
+          stored[1].direction === 'funding' && Number(stored[1].a) === 1200,
+          `${stored[1].direction} ${stored[1].a}`);
+
+    const [totals] = await q(
+      client,
+      'select total_spend::numeric s, total_funding::numeric f from card_balances where card_id = $1',
+      [drawnId],
+    );
+    check('spend reporting is unaffected by the convention',
+          near(totals.s, -1000) && near(totals.f, 1200),
+          `spend ${money(totals.s)}, funding ${money(totals.f)}`);
+  });
+
+  await scenario(() =>
+    expectRefused('a balance convention that is neither +1 nor -1', () =>
+      client.query(
+        `select create_card('E2E BAD SIGN', 0, '2026-06-01', 'Credit card', 'active',
+                            'AED', null, null, null, null, 0::smallint)`,
+      )));
 
   /* ================================================== 4. what must be refused */
 

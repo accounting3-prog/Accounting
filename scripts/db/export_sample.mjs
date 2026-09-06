@@ -58,6 +58,7 @@ try {
     sourceBalance: num(c.source_balance),
     ledgerBalance: num(c.ledger_balance),
     reconciliationDifference: num(c.reconciliation_difference),
+    balanceSign: Number(c.balance_sign) === -1 ? -1 : 1,
     totalSpend: num(c.total_spend),
     totalFunding: num(c.total_funding),
     reviewAdjustmentsTotal: num(c.review_adjustments_total),

@@ -5,7 +5,7 @@ import { TransactionDrawer } from '../components/TransactionDrawer';
 import { EditTransactionDialog } from '../components/EditTransactionDialog';
 import { useLedgerState } from '../components/LedgerProvider';
 import { matchesQuery, searchHaystack } from '../lib/search';
-import { exportCsv, exportXlsx } from '../lib/export';
+import { exportCardTemplate, exportCsv, exportXlsx, TEMPLATE_BLANK_ROWS } from '../lib/export';
 import { EMPTY_FILTERS } from '../lib/search';
 import {
   Button,
@@ -168,30 +168,61 @@ export function CardDetail() {
     (t) => t.status !== 'confirmed' || t.entry_type === 'reconciliation_adjustment',
   );
   const hasDifference = Math.abs(card.reconciliationDifference) > 0.005;
+  const [templateName, setTemplateName] = useState<string | null>(null);
 
   return (
     <Page
       title={card.name}
       description={
-        <>
-          Sheet <span className="font-medium text-ink">{card.name}</span>,
-          header row {card.sourceHeaderRow}. The balance formula is{' '}
-          <code className="rounded-sm bg-sunken px-1 font-mono text-xs">
-            {card.balanceFormula}
-          </code>
-          , so column {card.decreasingColumn} reduces the balance
-          {card.headerIsMisleading && (
-            <> — even though it is labelled “{card.decreasingHeader}”</>
-          )}
-          .
-        </>
+        card.balanceSign === -1 ? (
+          <>
+            Sheet <span className="font-medium text-ink">{card.name}</span>, header row{' '}
+            {card.sourceHeaderRow}. Column {card.decreasingColumn} (“
+            {card.decreasingHeader.trim()}”) is the spend side. This statement's balance
+            counts what has been drawn on the card rather than what is left on it, so
+            spending raises the figure and a payment lowers it.
+          </>
+        ) : (
+          <>
+            Sheet <span className="font-medium text-ink">{card.name}</span>,
+            header row {card.sourceHeaderRow}. The balance formula is{' '}
+            <code className="rounded-sm bg-sunken px-1 font-mono text-xs">
+              {card.balanceFormula}
+            </code>
+            , so column {card.decreasingColumn} reduces the balance
+            {card.headerIsMisleading && (
+              <> — even though it is labelled “{card.decreasingHeader}”</>
+            )}
+            .
+          </>
+        )
       }
       actions={
-        <Link to="/transactions">
-          <Button>All transactions</Button>
-        </Link>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button
+            variant="secondary"
+            onClick={() => setTemplateName(exportCardTemplate(card))}
+            title="A blank sheet with this card's own columns, balance formula and current balance"
+          >
+            Blank sheet
+          </Button>
+          <Link to="/transactions">
+            <Button>All transactions</Button>
+          </Link>
+        </div>
       }
     >
+      {templateName && (
+        <div className="mb-5">
+          <Notice tone="accent" title="Blank sheet downloaded">
+            <span className="font-medium">{templateName}</span> — {TEMPLATE_BLANK_ROWS} empty
+            rows opening on this card's balance today, with its own columns and balance formula.
+            Fill it in and bring it to the Import page. The BALANCE column is there for you to
+            check your own work; it is not imported.
+          </Notice>
+        </div>
+      )}
+
       {card.headerIsMisleading && (
         <div className="mb-5">
           <Notice tone="accent" title="This sheet's column labels are misleading">

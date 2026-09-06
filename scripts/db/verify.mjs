@@ -50,15 +50,20 @@ try {
   // Spelled out deliberately: opening balance plus the transactions that the
   // workbook's own formula consumed gives the source balance; opening balance
   // plus every non-voided real transaction gives the ledger balance.
+  //
+  // balance_sign is applied because the card decides which way its own balance
+  // moves — RAK 9825's statement counts money drawn, so spending raises it.
+  // Written out here rather than read from the view, since the point of this
+  // script is to derive the figures a second way.
   const raw = await q(
     client,
     `
     select c.name,
            c.opening_balance::numeric                                    as opening,
-           c.opening_balance + coalesce(sum(t.amount_aed) filter (
+           c.opening_balance + c.balance_sign * coalesce(sum(t.amount_aed) filter (
                where t.included_in_source_balance and t.status <> 'voided'), 0)
                                                                           as source_balance,
-           c.opening_balance + coalesce(sum(t.amount_aed) filter (
+           c.opening_balance + c.balance_sign * coalesce(sum(t.amount_aed) filter (
                where t.entry_type = 'source_transaction' and t.status <> 'voided'), 0)
                                                                           as ledger_balance,
            coalesce(sum(t.amount_aed) filter (
@@ -198,8 +203,13 @@ try {
   // overwrite — the chain runs unbroken through the 10,000 payment — so the
   // 1,718.02 was an artefact of the previous file. It is voided, kept on
   // record, and the two balances now agree.
-  check('RAK 9825 statement balance', Number(rak.source_balance), -1552.78);
-  check('RAK 9825 ledger balance', Number(rak.ledger_balance), -1552.78);
+  //
+  // The statement also runs its balance the drawn way: a purchase raises the
+  // figure, a payment lowers it. Replayed that way from -859.01 it closes on
+  // the -165.72 printed at its foot, which is the figure below. Read the other
+  // way the same rows give -1,552.30; only one of those is the sheet's own.
+  check('RAK 9825 statement balance', Number(rak.source_balance), -165.72);
+  check('RAK 9825 ledger balance', Number(rak.ledger_balance), -165.72);
   check('RAK 9825 reconciles',
         Number(rak.source_balance) - Number(rak.ledger_balance), 0);
   check('no unresolved adjustment counts toward a balance',

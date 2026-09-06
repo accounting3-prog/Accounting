@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { updateTransaction } from '../lib/api';
 import { CURRENCY_CODES } from '../lib/currencies';
 import { formatDate } from '../lib/format';
+import { projectBalance } from '../lib/ledger';
 import type { Card, Transaction, TxnKind } from '../lib/types';
 import { Button, Field, Money, Notice, fieldClass } from './ui';
 
@@ -78,7 +79,7 @@ export function EditTransactionDialog({
     if (!Number.isFinite(positive) || positive <= 0) return null;
     const signed = kind === 'purchase' || kind === 'fee' ? -positive : positive;
     // Take the old effect out and put the new one in.
-    return card.ledgerBalance - transaction.amount_aed + signed;
+    return projectBalance(card, signed - transaction.amount_aed);
   }, [transaction, card, amount, kind]);
 
   if (!transaction || !card) return null;

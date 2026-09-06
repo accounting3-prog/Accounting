@@ -472,9 +472,21 @@ export function bindDirectionColumns(
     if (debit !== undefined) mapping.increase = debit;
   }
 
-  const note = card
-    ? `On ${card.name} the ${card.decreasingHeader.trim()} column decreases the balance and ${card.increasingHeader.trim()} increases it — its own formula ${card.balanceFormula} says so. The file is read that way.`
-    : 'Choose a card to settle which column decreases the balance.';
+  // What the columns MEAN is one question; which way the statement's running
+  // total then moves is another, and on RAK 9825 the two come apart. Both are
+  // stated, because a reviewer checking an import needs the first and a
+  // reviewer checking a balance needs the second.
+  const spendCol = card?.decreasingHeader.trim() ?? '';
+  const receiveCol = card?.increasingHeader.trim() ?? '';
+  const note = !card
+    ? 'Choose a card to settle which column is money spent.'
+    : card.balanceSign === -1
+      ? `On ${card.name} the ${spendCol} column is money spent and ${receiveCol} is money received. ` +
+        `This statement's balance counts what has been drawn on the card, not what is left on it, ` +
+        `so spending raises the figure and a payment lowers it. The file is read that way.`
+      : `On ${card.name} the ${spendCol} column is money spent, which lowers the balance, and ` +
+        `${receiveCol} is money received, which raises it — its own formula ${card.balanceFormula} ` +
+        `says so. The file is read that way.`;
   return { mapping, note };
 }
 
@@ -727,6 +739,22 @@ export interface ImportRow {
   duplicateOf?: { id: string; date: string; amount: number; supplier: string };
 }
 
+/**
+ * What to call a row in the column that raises the balance.
+ *
+ * Both answers store the same thing — refund and funding are each recorded as
+ * direction 'funding' — so this only decides what the reviewer reads before
+ * saving. That is reason to get it right rather than reason not to care:
+ * these statements are full of bank top-ups reading 'PAYMENT RECD.-INTERNET
+ * BANKING', and calling those refunds tells the reviewer a supplier gave money
+ * back when nobody did. Money in is funding unless the row says otherwise.
+ */
+const REFUND_RE = /\b(refund(ed|s)?|reversal|reversed|charge\s*back|chargeback|credit\s*note|cancell?ation)\b/i;
+
+function moneyInKind(supplier: string, notes: string): RowKind {
+  return REFUND_RE.test(`${supplier} ${notes}`) ? 'refund' : 'funding';
+}
+
 export interface BuildOptions {
   dayFirst: boolean;
   /** Rows already in the ledger, used to spot a re-upload. */
@@ -776,10 +804,13 @@ export function buildRows(
       kind = 'purchase';
     } else if (increase !== null && increase !== 0) {
       amountAed = Math.abs(increase);
-      kind = 'refund';
+      kind = moneyInKind(cell(row, mapping.supplier), cell(row, mapping.notes));
     } else if (signed !== null && signed !== 0) {
       amountAed = Math.abs(signed);
-      kind = signed < 0 ? 'purchase' : 'refund';
+      kind =
+        signed < 0
+          ? 'purchase'
+          : moneyInKind(cell(row, mapping.supplier), cell(row, mapping.notes));
     }
 
     const supplier = cell(row, mapping.supplier);

@@ -36,6 +36,17 @@ export interface Card {
   ledgerBalance: number;
   /** sourceBalance − ledgerBalance. Non-zero means the two disagree. */
   reconciliationDifference: number;
+  /**
+   * How this card's statement runs its balance.
+   *  +1  the balance counts money available, so a purchase lowers it —
+   *      six of the seven sheets.
+   *  -1  the balance counts money drawn, so a purchase raises it and a payment
+   *      lowers it — RAK 9825, whose column says "Available Balance" but does
+   *      not behave like one.
+   * Transactions keep their economic sign either way: a purchase is always
+   * negative, so spend reporting is unaffected by this.
+   */
+  balanceSign: 1 | -1;
   totalSpend: number;
   totalFunding: number;
   reviewAdjustmentsTotal: number;

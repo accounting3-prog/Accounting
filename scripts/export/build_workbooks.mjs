@@ -107,6 +107,10 @@ const transactions = [
   txn('t5', 'c3', { txn_date: '2026-05-11', amount_aed: -0.01, supplier: 'Tiny' }),
   txn('t6', 'c4', { txn_date: '2026-06-30', amount_aed: 42, direction: 'funding', supplier: 'Odd/Name' }),
   txn('t7', 'c4', { txn_date: '2026-07-04', amount_aed: -0.005, supplier: 'Sub-cent' }),
+  // A control character is illegal in XML 1.0 and corrupts the whole file if
+  // it reaches the sheet. The exporter strips it; this proves it still does.
+  txn('t8', 'c4', { txn_date: '2026-07-05', amount_aed: -12.34,
+                    supplier: 'Bell' + String.fromCharCode(7) + 'Co' }),
 ];
 
 /* ------------------------------------------------------------------- write */

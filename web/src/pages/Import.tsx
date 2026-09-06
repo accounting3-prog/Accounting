@@ -28,7 +28,8 @@ import {
   labelClass,
 } from '../components/ui';
 import { submitTransaction } from '../lib/api';
-import { getCards, getTransactions } from '../lib/ledger';
+import { getCards, getTransactions, projectBalance } from '../lib/ledger';
+import { exportCardTemplate, TEMPLATE_BLANK_ROWS } from '../lib/export';
 import { formatDate } from '../lib/format';
 import {
   analyseSheet,
@@ -371,6 +372,7 @@ export function Import() {
               </div>
 
               {card && <CardConvention card={card} note={analysis?.directionNote ?? ''} />}
+              {card && <BlankSheetLink card={card} />}
             </div>
           </Panel>
         )}
@@ -532,7 +534,7 @@ export function Import() {
                 {card && (
                   <span className="text-ink-muted">
                     Balance would go from <Money amount={card.ledgerBalance} code={false} /> to{' '}
-                    <Money amount={card.ledgerBalance - spendTotal + fundingTotal} tone="ledger" code={false} />
+                    <Money amount={projectBalance(card, fundingTotal - spendTotal)} tone="ledger" code={false} />
                   </span>
                 )}
               </div>
@@ -704,12 +706,50 @@ export function Import() {
               </p>
               <p className="mt-2">
                 Exporting a card from the Transactions page gives a file in exactly this shape.
+                Or start from a blank one:
               </p>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {cards.map((c) => (
+                  <Button key={c.id} variant="secondary" onClick={() => exportCardTemplate(c)}>
+                    {c.name}
+                  </Button>
+                ))}
+              </div>
             </div>
           </Panel>
         )}
       </div>
     </Page>
+  );
+}
+
+/**
+ * Offers a blank sheet shaped like this card's own statement.
+ *
+ * Placed next to the card choice rather than on a page of its own, because the
+ * template is only meaningful once a card is chosen — its columns, its balance
+ * formula and its opening figure all come from that card.
+ */
+function BlankSheetLink({ card }: { card: Card }) {
+  const [name, setName] = useState<string | null>(null);
+  return (
+    <div className="mt-3 border-t border-line pt-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="secondary" onClick={() => setName(exportCardTemplate(card))}>
+          Download a blank sheet for this card
+        </Button>
+        <span className="text-[13px] text-ink-muted">
+          {TEMPLATE_BLANK_ROWS} empty rows, this card's own columns and balance formula, opening
+          on its balance today.
+        </span>
+      </div>
+      {name && (
+        <p className="mt-2 text-[13px] text-ink-muted">
+          Downloaded <span className="font-medium text-ink">{name}</span>. Fill it in and bring it
+          back here — the BALANCE column is for checking your own work and is not imported.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -719,10 +759,13 @@ function CardConvention({ card, note }: { card: Card; note: string }) {
     <div className="mt-4 rounded-md border border-line bg-sunken px-3.5 py-3 text-[13px]">
       <p className="text-ink">{note}</p>
       <div className="mt-2 flex flex-wrap gap-2">
-        <Tag tone="negative">{card.decreasingHeader.trim()} decreases the balance</Tag>
-        <Tag tone="accent">{card.increasingHeader.trim()} increases it</Tag>
+        <Tag tone="negative">{card.decreasingHeader.trim()} = money spent</Tag>
+        <Tag tone="accent">{card.increasingHeader.trim()} = money received</Tag>
         {card.headerIsMisleading && (
           <Tag tone="review">This card's headers run the opposite way to the others</Tag>
+        )}
+        {card.balanceSign === -1 && (
+          <Tag tone="review">On this card, spending raises the balance figure</Tag>
         )}
       </div>
     </div>

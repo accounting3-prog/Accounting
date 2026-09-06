@@ -14,6 +14,7 @@
 import { useEffect, useState } from 'react';
 import { resolveReviewItem, type ResolveAction } from '../lib/api';
 import { formatDate } from '../lib/format';
+import { projectBalance } from '../lib/ledger';
 import type { Card, Transaction } from '../lib/types';
 import { Button, Money, Notice } from './ui';
 
@@ -32,8 +33,8 @@ function projectedBalance(t: Transaction, card: Card, action: ResolveAction): nu
   const countedAfter = action !== 'void';
   if (countedNow === countedAfter) return card.ledgerBalance;
   return countedAfter
-    ? card.ledgerBalance + t.amount_aed
-    : card.ledgerBalance - t.amount_aed;
+    ? projectBalance(card, t.amount_aed)
+    : projectBalance(card, -t.amount_aed);
 }
 
 export function ResolveDialog({

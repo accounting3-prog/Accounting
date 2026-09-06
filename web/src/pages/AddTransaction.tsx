@@ -32,6 +32,7 @@ import {
   directionForKind,
   findDuplicateCandidates,
   getCards,
+  projectBalance,
   round2,
   signedEffect,
 } from '../lib/ledger';
@@ -144,7 +145,7 @@ export function AddTransaction() {
   const amount = Number(f.amountAed) || 0;
   const effect = signedEffect(f.kind, amount);
   const direction = directionForKind(f.kind);
-  const projected = card ? round2(card.ledgerBalance + effect) : null;
+  const projected = card ? projectBalance(card, effect) : null;
 
   // Rate consistency is shown, never corrected.
   const impliedAed =

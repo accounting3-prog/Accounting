@@ -159,6 +159,20 @@ check(
     "an embedded newline survives",
     any("\n" in s for s in suppliers if isinstance(s, str)),
 )
+check(
+    "a control character was stripped, not written into the XML",
+    "BellCo" in suppliers,
+    str([s for s in suppliers if isinstance(s, str) and "Bell" in s]),
+)
+check(
+    "no cell holds a character XML 1.0 forbids",
+    not any(
+        ord(ch) < 32 and ch not in "\n\r\t"
+        for s in suppliers
+        if isinstance(s, str)
+        for ch in s
+    ),
+)
 
 # ---------------------------------------------------------------- summary tab
 

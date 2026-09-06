@@ -12,7 +12,7 @@
  *   - the `authenticated` and `anon` roles that RLS policies are granted to
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 
@@ -51,7 +51,11 @@ const SUPABASE_SHIM = `
   end $$;
 `;
 
-export async function freshDatabase({ schemaPath, quiet = true } = {}) {
+export async function freshDatabase({
+  schemaPath,
+  migrationsDir = 'supabase/migrations',
+  quiet = true,
+} = {}) {
   const db = await PGlite.create({ extensions: { pgcrypto, pg_trgm } });
   await db.exec(SUPABASE_SHIM);
 
@@ -60,6 +64,23 @@ export async function freshDatabase({ schemaPath, quiet = true } = {}) {
     // Supabase. If it is going to fail there, it fails here first.
     const sql = await readFile(schemaPath, 'utf8');
     await db.exec(sql);
+
+    // Then every migration, in numeric order. Production is schema.sql plus
+    // these; a throwaway database built from schema.sql alone is a different
+    // database, and anything proved against it is proved about the wrong
+    // shape — its views would still be the pre-migration ones.
+    if (migrationsDir) {
+      const files = (await readdir(migrationsDir)).filter((f) => f.endsWith('.sql')).sort();
+      for (const f of files) {
+        const text = await readFile(path.join(migrationsDir, f), 'utf8');
+        try {
+          await db.exec(text);
+        } catch (e) {
+          throw new Error(`migration ${f} failed against a fresh database: ${e.message}`);
+        }
+      }
+      if (!quiet) console.log(`  ${files.length} migrations applied`);
+    }
   }
   if (!quiet) {
     const v = await one(db, 'select version()');

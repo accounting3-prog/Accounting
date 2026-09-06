@@ -36,7 +36,7 @@ export function searchHaystack(t: Transaction, cardName: string): string {
     t.source_row != null ? `row ${t.source_row}` : '',
   ]
     .filter(Boolean)
-    .join('  ')
+    .join(' \x01 ')
     .toLowerCase();
 }
 

@@ -49,8 +49,12 @@ grant select on card_spend_by_currency to authenticated;
 -- having done so. admin_audit and card_audit were already append-only; this
 -- was the one that was not, and it is the one that records money moving.
 
-drop policy if exists transaction_corrections_write on transaction_corrections;
-drop policy if exists transaction_corrections_read  on transaction_corrections;
+drop policy if exists transaction_corrections_write  on transaction_corrections;
+drop policy if exists transaction_corrections_read   on transaction_corrections;
+-- schema.sql later grew its own copy of this policy, so a fresh database has
+-- one before this migration runs. Dropped first, like the two above, or
+-- re-applying the migration fails on "policy already exists".
+drop policy if exists transaction_corrections_insert on transaction_corrections;
 
 create policy transaction_corrections_read on transaction_corrections
     for select to authenticated using (true);

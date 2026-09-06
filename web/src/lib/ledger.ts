@@ -318,6 +318,21 @@ export function signedEffect(kind: TxnKind, positiveAmount: number): number {
   return positiveAmount; // adjustment: signed as entered, and never in a total
 }
 
+/**
+ * Where a card's balance lands once `signedTotal` is added to it.
+ *
+ * The card decides which way its own balance moves. Six of the seven sheets
+ * write an available balance, so spending lowers it; RAK 9825's statement
+ * counts what has been drawn, so spending raises it. Every projection in the
+ * app goes through here rather than writing `balance + amount` inline, because
+ * that expression is right on six cards and wrong on the seventh.
+ *
+ * `signedTotal` is always the economic sign: spend negative, money in positive.
+ */
+export function projectBalance(card: Card, signedTotal: number): number {
+  return round2(card.ledgerBalance + card.balanceSign * signedTotal);
+}
+
 export const TXN_KIND_LABEL: Record<TxnKind, string> = {
   purchase: 'Purchase',
   refund: 'Refund',

@@ -246,7 +246,12 @@ try {
 
   // Third method: pull every raw amount and add them up here, in JavaScript,
   // applying the opening-date rule by hand.
-  const cards = await q(client, 'select id, name, opening_balance, opening_date from cards order by name');
+  // balance_sign is read here because this replay must derive the balance the
+  // same way the card's own statement does. Six sheets write an available
+  // balance; RAK 9825 writes what has been drawn, so its balance moves the
+  // other way from the very same rows.
+  const cards = await q(client,
+    'select id, name, opening_balance, opening_date, balance_sign::int as sign from cards order by name');
   const rows = await q(
     client,
     `select card_id, amount_aed, txn_date, entry_type, status,
@@ -261,14 +266,16 @@ try {
     );
     const ledger =
       Number(c.opening_balance) +
-      mine
-        .filter((r) => r.entry_type === 'source_transaction' && r.status !== 'voided')
-        .reduce((a, r) => a + Number(r.amount_aed), 0);
+      c.sign *
+        mine
+          .filter((r) => r.entry_type === 'source_transaction' && r.status !== 'voided')
+          .reduce((a, r) => a + Number(r.amount_aed), 0);
     const source =
       Number(c.opening_balance) +
-      mine
-        .filter((r) => r.included_in_source_balance && r.status !== 'voided')
-        .reduce((a, r) => a + Number(r.amount_aed), 0);
+      c.sign *
+        mine
+          .filter((r) => r.included_in_source_balance && r.status !== 'voided')
+          .reduce((a, r) => a + Number(r.amount_aed), 0);
     const v = viewBal.find((x) => x.card_name === c.name);
     check(
       `${c.name.padEnd(30)} replay matches the view`,
@@ -291,10 +298,12 @@ try {
         money(amex.ledger_balance));
   check('FLYNAS applied exactly once from the pre-FLYNAS chain',
         near(PRE_FLYNAS + FLYNAS, amex.ledger_balance));
-  // Reissued statement, 5 Sep 2026: no manual overwrite, so the two agree.
-  check('RAK 9825 statement balance', near(rak.source_balance, -1552.78),
+  // Reissued statement, 5 Sep 2026: no manual overwrite, so the two agree, and
+  // its balance counts what has been drawn — a purchase raises it. Replayed
+  // that way it closes on the -165.72 printed at the foot of the sheet.
+  check('RAK 9825 statement balance', near(rak.source_balance, -165.72),
         money(rak.source_balance));
-  check('RAK 9825 ledger balance', near(rak.ledger_balance, -1552.78),
+  check('RAK 9825 ledger balance', near(rak.ledger_balance, -165.72),
         money(rak.ledger_balance));
   check('RAK 9825 reconciles', near(rak.reconciliation_difference, 0));
   check('no unresolved adjustment counts toward any balance',

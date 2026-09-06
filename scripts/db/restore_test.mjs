@@ -200,7 +200,14 @@ console.log(`  ${cardIds.size} cards, ${supplierIds.size} suppliers, ${imported}
 const balancesBefore = (
   await db.query('select card_name, source_balance, ledger_balance from card_balances order by card_name')
 ).rows;
-console.log('  balances computed from the restored-into database:');
+// These are the figures the extraction snapshot produces, not the figures the
+// live ledger shows. This database is built from scripts/out/normalised.json,
+// which predates the corrections made against the live project — RAK 9825 in
+// particular still carries its unvoided adjustment and the +1 convention its
+// old sheet formula implied. What is being proved here is that a restore
+// returns exactly what was backed up, so the two need not agree.
+console.log('  balances computed from the restored-into database');
+console.log('  (the extraction snapshot, so not necessarily the live figures):');
 for (const b of balancesBefore)
   console.log(
     `    ${String(b.card_name).padEnd(32)}source ${String(b.source_balance).padStart(12)}` +

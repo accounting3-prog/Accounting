@@ -59,6 +59,8 @@ interface BalanceRow {
   needs_review_count: string | number; excluded_count: string | number;
   transaction_count: string | number; last_transaction: string | null;
   first_transaction: string | null;
+  /** +1 for a balance that counts money available, -1 for one that counts money drawn. */
+  balance_sign: string | number;
 }
 
 const num = (v: string | number | null | undefined): number =>
@@ -163,6 +165,7 @@ export async function loadLedger(
         sourceBalance: num(b?.source_balance),
         ledgerBalance: num(b?.ledger_balance),
         reconciliationDifference: num(b?.reconciliation_difference),
+        balanceSign: Number(b?.balance_sign) === -1 ? -1 : 1,
         totalSpend: num(b?.total_spend),
         totalFunding: num(b?.total_funding),
         reviewAdjustmentsTotal: num(b?.review_adjustments_total),
