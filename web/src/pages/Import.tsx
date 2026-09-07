@@ -27,7 +27,12 @@ import {
   fieldClass,
   labelClass,
 } from '../components/ui';
-import { submitTransaction, updateTransaction, type TransactionEdit } from '../lib/api';
+import {
+  getCardBalanceNow,
+  submitTransaction,
+  updateTransaction,
+  type TransactionEdit,
+} from '../lib/api';
 import { getCards, getTransactions, projectBalance } from '../lib/ledger';
 import { exportCardTemplate, TEMPLATE_BLANK_ROWS } from '../lib/export';
 import { formatDate } from '../lib/format';
@@ -125,6 +130,20 @@ export function Import() {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [outcomes, setOutcomes] = useState<Outcome[] | null>(null);
+  /**
+   * What the file held versus what was actually attempted, captured when the
+   * run starts.
+   *
+   * "31 imported" is a true statement about a file of 36 rows and a badly
+   * incomplete one. The five that were never attempted — unticked as suspected
+   * duplicates — are exactly the rows someone needs to know about, because the
+   * balance will be short by their total and nothing else will say so.
+   */
+  const [runSummary, setRunSummary] = useState<{
+    inFile: number;
+    attempted: number;
+    leftOut: { sourceRow: number; supplier: string; amount: number | null; why: string }[];
+  } | null>(null);
   /** Set when the import stopped because of who is signed in, not what is in the file. */
   const [blockedBy, setBlockedBy] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -140,6 +159,7 @@ export function Import() {
     setColumnsOpen(null);
     setOutcomes(null);
     setUpdateOutcomes(null);
+    setRunSummary(null);
     setBlockedBy(null);
   };
 
@@ -242,6 +262,25 @@ export function Import() {
     setRunning(true);
     setProgress(0);
     setBlockedBy(null);
+
+    const attempting = new Set(included.map((r) => r.sourceRow));
+    setRunSummary({
+      inFile: rows.length,
+      attempted: included.length,
+      leftOut: rows
+        .filter((r) => !attempting.has(r.sourceRow))
+        .map((r) => ({
+          sourceRow: r.sourceRow,
+          supplier: r.supplier,
+          amount: r.amountAed,
+          why: r.errors.length
+            ? r.errors[0]
+            : r.duplicateOf
+              ? 'Looks like a transaction already in the ledger, so it was left unticked.'
+              : 'Unticked before importing.',
+        })),
+    });
+
     const results: Outcome[] = [];
     for (let i = 0; i < included.length; i++) {
       const row = included[i];
@@ -951,8 +990,51 @@ export function Import() {
                     , <span className="font-semibold text-negative">{failed.length}</span> refused
                   </>
                 )}
-                .
+                {runSummary && runSummary.leftOut.length > 0 && (
+                  <>
+                    ,{' '}
+                    <span className="font-semibold text-review">
+                      {runSummary.leftOut.length}
+                    </span>{' '}
+                    not attempted
+                  </>
+                )}
+                {runSummary && (
+                  <span className="text-ink-muted">
+                    {' '}
+                    — out of {runSummary.inFile} row{runSummary.inFile === 1 ? '' : 's'} in the
+                    file.
+                  </span>
+                )}
               </p>
+
+              {runSummary && runSummary.leftOut.length > 0 && (
+                <Notice
+                  tone="review"
+                  title={`${runSummary.leftOut.length} row${
+                    runSummary.leftOut.length === 1 ? ' was' : 's were'
+                  } in the file but not imported`}
+                >
+                  <p>
+                    The balance does not include{' '}
+                    {runSummary.leftOut.length === 1 ? 'it' : 'them'}. If{' '}
+                    {runSummary.leftOut.length === 1 ? 'it is' : 'they are'} real, upload the same
+                    file again and tick {runSummary.leftOut.length === 1 ? 'it' : 'them'} back on
+                    — everything already imported will be recognised and left alone.
+                  </p>
+                  <ul className="mt-2 space-y-1">
+                    {runSummary.leftOut.slice(0, 12).map((r) => (
+                      <li key={r.sourceRow} className="tnum">
+                        Row {r.sourceRow} — {r.supplier || '(no supplier)'}
+                        {r.amount !== null && ` , ${r.amount.toFixed(2)} AED`} — {r.why}
+                      </li>
+                    ))}
+                  </ul>
+                  {runSummary.leftOut.length > 12 && (
+                    <p className="mt-1">…and {runSummary.leftOut.length - 12} more.</p>
+                  )}
+                </Notice>
+              )}
               {blockedBy && (
                 <Notice tone="negative" title="The import stopped">
                   {blockedBy}
@@ -1006,7 +1088,11 @@ export function Import() {
               </p>
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {cards.map((c) => (
-                  <Button key={c.id} variant="secondary" onClick={() => exportCardTemplate(c)}>
+                  <Button
+                    key={c.id}
+                    variant="secondary"
+                    onClick={() => void exportCardTemplate(c, getCardBalanceNow)}
+                  >
                     {c.name}
                   </Button>
                 ))}
@@ -1027,22 +1113,47 @@ export function Import() {
  * formula and its opening figure all come from that card.
  */
 function BlankSheetLink({ card }: { card: Card }) {
-  const [name, setName] = useState<string | null>(null);
+  const [result, setResult] = useState<
+    { ok: true; name: string; balance: number; wasStale: boolean } | { ok: false; error: string } | null
+  >(null);
+  const [busy, setBusy] = useState(false);
+
+  const download = async () => {
+    setBusy(true);
+    setResult(await exportCardTemplate(card, getCardBalanceNow));
+    setBusy(false);
+  };
+
   return (
     <div className="mt-3 border-t border-line pt-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="secondary" onClick={() => setName(exportCardTemplate(card))}>
-          Download a blank sheet for this card
+        <Button variant="secondary" disabled={busy} onClick={() => void download()}>
+          {busy ? 'Checking the balance…' : 'Download a blank sheet for this card'}
         </Button>
         <span className="text-[13px] text-ink-muted">
           {TEMPLATE_BLANK_ROWS} empty rows, this card's own columns and balance formula, opening
-          on its balance today.
+          on its balance read fresh from the database.
         </span>
       </div>
-      {name && (
+      {result && !result.ok && (
+        <Notice tone="negative" title="No sheet was written">
+          The balance could not be confirmed, and a blank sheet stating a figure nobody could
+          check is worse than no sheet. {result.error}
+        </Notice>
+      )}
+      {result && result.ok && (
         <p className="mt-2 text-[13px] text-ink-muted">
-          Downloaded <span className="font-medium text-ink">{name}</span>. Fill it in and bring it
-          back here — the BALANCE column is for checking your own work and is not imported.
+          Downloaded <span className="font-medium text-ink">{result.name}</span>, opening on{' '}
+          <span className="tnum font-medium text-ink">
+            {result.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+          </span>{' '}
+          AED. Fill it in and bring it back here — the BALANCE column is for checking your own
+          work and is not imported.
+          {result.wasStale && (
+            <span className="mt-1 block text-review">
+              This page was showing an older balance. The sheet has the current one.
+            </span>
+          )}
         </p>
       )}
     </div>

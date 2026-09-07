@@ -30,6 +30,8 @@ interface LedgerState {
   failure?: LoadFailure;
   /** Bumped on every successful load so consumers re-render. */
   version: number;
+  /** When the figures on screen were read from the database. */
+  loadedAt: Date | null;
   reload: () => void;
   signedIn: boolean;
   signOut: () => void;
@@ -55,6 +57,7 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
   const [source, setSource] = useState<LedgerSource>('sample');
   const [failure, setFailure] = useState<LoadFailure | undefined>();
   const [version, setVersion] = useState(0);
+  const [loadedAt, setLoadedAt] = useState<Date | null>(null);
   const [access, setAccess] = useState<MyAccess>({
     canWrite: false,
     canManage: false,
@@ -76,6 +79,7 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
     setSource(result.source);
     setFailure(result.failure);
     setVersion((v) => v + 1);
+    setLoadedAt(new Date());
     setStatus(result.data.cards.length === 0 ? 'empty' : 'ready');
   }, []);
 
@@ -88,11 +92,42 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
     void load(auth.status === 'signed_in');
   }, [load, auth.status]);
 
+  /**
+   * Re-read when the tab comes back to the front, and on a slow timer while it
+   * is in front.
+   *
+   * The ledger used to load once per page load and then never again unless
+   * something on that tab wrote to it. A tab left open all day went on serving
+   * the figures it fetched at breakfast — which is how a colleague's import of
+   * 31 transactions was invisible to a second tab ten minutes later, and how a
+   * blank sheet downloaded hours afterwards was written with a balance that had
+   * moved by 303,151.11 AED. Nothing on screen said the numbers were old,
+   * because nothing knew.
+   *
+   * Coming back to a tab is exactly when someone is about to act on what it
+   * says, so that is when it is worth the round trip.
+   */
+  useEffect(() => {
+    if (auth.status !== 'signed_in') return;
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void load(true);
+    };
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+    const timer = window.setInterval(refresh, 5 * 60 * 1000);
+    return () => {
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('focus', refresh);
+      window.clearInterval(timer);
+    };
+  }, [load, auth.status]);
+
   const state: LedgerState = {
     status,
     source,
     failure,
     version,
+    loadedAt,
     reload: () => void load(signedIn),
     signedIn,
     signOut: auth.signOut,

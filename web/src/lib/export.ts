@@ -686,13 +686,31 @@ export function buildCardTemplate(card: Card, blankRows = TEMPLATE_BLANK_ROWS): 
   ]);
 }
 
-export function exportCardTemplate(card: Card): string {
+/**
+ * Downloads the blank sheet, with the balance confirmed against the database
+ * first.
+ *
+ * `card.ledgerBalance` is whatever the page last loaded, and a page can be
+ * hours old. This file states a balance as fact to whoever fills it in, so the
+ * figure is re-read at the moment of the click. If it cannot be read, nothing
+ * is written: a sheet carrying a number nobody could confirm is worse than no
+ * sheet.
+ */
+export async function exportCardTemplate(
+  card: Card,
+  confirmBalance: (cardId: string) =>
+    Promise<{ ok: true; ledgerBalance: number } | { ok: false; error: string }>,
+): Promise<{ ok: true; name: string; balance: number; wasStale: boolean } | { ok: false; error: string }> {
+  const live = await confirmBalance(card.id);
+  if (!live.ok) return live;
+
+  const wasStale = Math.abs(live.ledgerBalance - card.ledgerBalance) > 0.005;
   const safe = card.name.replace(/[\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
   const name = `${safe} — blank sheet.xlsx`;
   downloadBlob(
-    buildCardTemplate(card),
+    buildCardTemplate({ ...card, ledgerBalance: live.ledgerBalance }),
     name,
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   );
-  return name;
+  return { ok: true, name, balance: live.ledgerBalance, wasStale };
 }

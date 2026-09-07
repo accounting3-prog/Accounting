@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { getTotals } from '../lib/ledger';
 import { useDataSourceLabel, useLedgerState } from './LedgerProvider';
@@ -55,9 +55,28 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
+/** "3 minutes ago", and plainly enough to act on. */
+function ago(then: Date, now: number): string {
+  const seconds = Math.max(0, Math.round((now - then.getTime()) / 1000));
+  if (seconds < 45) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.round(minutes / 60);
+  return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+}
+
 function SourceBadge() {
   const { label, live } = useDataSourceLabel();
-  const { reload } = useLedgerState();
+  const { reload, loadedAt } = useLedgerState();
+  // Ticks so the age keeps up rather than freezing at whatever it said when
+  // the sidebar last rendered — which would be its own quiet way of lying.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(t);
+  }, []);
+  const stale = loadedAt !== null && now - loadedAt.getTime() > 10 * 60 * 1000;
+
   return (
     <div className="border-t border-line px-3 py-3">
       <div className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
@@ -73,6 +92,16 @@ function SourceBadge() {
       {!live && (
         <p className="mt-1 text-[11px] leading-snug text-ink-muted">
           Figures are the audited workbook extraction, not live data.
+        </p>
+      )}
+      {live && loadedAt && (
+        <p
+          className={`mt-1 text-[11px] leading-snug ${
+            stale ? 'font-medium text-review' : 'text-ink-muted'
+          }`}
+        >
+          Read {ago(loadedAt, now)}
+          {stale && ' — someone else may have changed it since'}
         </p>
       )}
       <button

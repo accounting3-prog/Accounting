@@ -5,6 +5,7 @@ import { TransactionDrawer } from '../components/TransactionDrawer';
 import { EditTransactionDialog } from '../components/EditTransactionDialog';
 import { useLedgerState } from '../components/LedgerProvider';
 import { matchesQuery, searchHaystack } from '../lib/search';
+import { getCardBalanceNow } from '../lib/api';
 import { exportCardTemplate, exportCsv, exportXlsx, TEMPLATE_BLANK_ROWS } from '../lib/export';
 import { EMPTY_FILTERS } from '../lib/search';
 import {
@@ -201,7 +202,10 @@ export function CardDetail() {
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
             variant="secondary"
-            onClick={() => setTemplateName(exportCardTemplate(card))}
+            onClick={async () => {
+              const r = await exportCardTemplate(card, getCardBalanceNow);
+              setTemplateName(r.ok ? r.name : `Not written — ${r.error}`);
+            }}
             title="A blank sheet with this card's own columns, balance formula and current balance"
           >
             Blank sheet

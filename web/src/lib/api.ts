@@ -633,3 +633,28 @@ export async function getMyAccess(): Promise<MyAccess> {
     email: (row?.email as string | null) ?? null,
   };
 }
+
+/**
+ * This card's balance, read now.
+ *
+ * The blank sheet writes a balance into a file that then leaves the app and is
+ * treated as the truth by whoever fills it in. A figure taken from a page that
+ * has been open since breakfast is not good enough for that, so the number is
+ * fetched at the moment the file is built, and the download is refused rather
+ * than written with a figure that could not be confirmed.
+ */
+export async function getCardBalanceNow(
+  cardId: string,
+): Promise<{ ok: true; ledgerBalance: number } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not connected to Supabase.' };
+  const { data, error } = await supabase
+    .from('card_balances')
+    .select('ledger_balance')
+    .eq('card_id', cardId)
+    .single();
+  if (error) return { ok: false, error: error.message };
+  const value = Number(data?.ledger_balance);
+  if (!Number.isFinite(value))
+    return { ok: false, error: 'The database returned no balance for this card.' };
+  return { ok: true, ledgerBalance: value };
+}
