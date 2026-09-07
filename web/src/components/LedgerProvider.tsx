@@ -64,8 +64,20 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
     email: null,
   });
 
-  const load = useCallback(async (signedIn: boolean) => {
-    setStatus('loading');
+  /**
+   * `quiet` keeps what is on screen while the new data is fetched.
+   *
+   * Without it a background refresh set the status to 'loading', and the
+   * provider renders a loading screen INSTEAD OF ITS CHILDREN — so every page
+   * unmounted and lost its state. On the import page that looked exactly like
+   * "I chose a file and nothing happened": the file dialog returning focus
+   * triggered a refresh, the page was torn down mid-selection, and a moment
+   * later it came back empty.
+   *
+   * Only the first load of a session is allowed to blank the screen.
+   */
+  const load = useCallback(async (signedIn: boolean, quiet = false) => {
+    if (!quiet) setStatus('loading');
     setFailure(undefined);
     const result = await loadLedger({ signedIn });
     // Asked alongside the ledger rather than on each page, so a screen never
@@ -93,8 +105,7 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
   }, [load, auth.status]);
 
   /**
-   * Re-read when the tab comes back to the front, and on a slow timer while it
-   * is in front.
+   * Re-read when the tab comes back into view, and on a slow timer while it is.
    *
    * The ledger used to load once per page load and then never again unless
    * something on that tab wrote to it. A tab left open all day went on serving
@@ -104,20 +115,26 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
    * moved by 303,151.11 AED. Nothing on screen said the numbers were old,
    * because nothing knew.
    *
-   * Coming back to a tab is exactly when someone is about to act on what it
-   * says, so that is when it is worth the round trip.
+   * Deliberately NOT on window focus. Focus leaves and returns for reasons that
+   * have nothing to do with the data being stale: a file picker, a print
+   * dialog, an alt-tab, a notification. The first version of this listened to
+   * focus, and opening a file chooser on the import page therefore tore the
+   * page down and rebuilt it empty, which read as the upload doing nothing at
+   * all. visibilitychange does not fire for any of those — the tab stays
+   * visible behind the dialog — and is the signal that actually means "this
+   * person is looking at the page again".
+   *
+   * Quiet, so nothing on screen is replaced by a spinner while it happens.
    */
   useEffect(() => {
     if (auth.status !== 'signed_in') return;
     const refresh = () => {
-      if (document.visibilityState === 'visible') void load(true);
+      if (document.visibilityState === 'visible') void load(true, true);
     };
     document.addEventListener('visibilitychange', refresh);
-    window.addEventListener('focus', refresh);
     const timer = window.setInterval(refresh, 5 * 60 * 1000);
     return () => {
       document.removeEventListener('visibilitychange', refresh);
-      window.removeEventListener('focus', refresh);
       window.clearInterval(timer);
     };
   }, [load, auth.status]);
@@ -128,7 +145,9 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
     failure,
     version,
     loadedAt,
-    reload: () => void load(signedIn),
+    // Quiet as well: pressing Refresh should update the figures, not throw
+    // away whatever the person was in the middle of.
+    reload: () => void load(signedIn, true),
     signedIn,
     signOut: auth.signOut,
     access,

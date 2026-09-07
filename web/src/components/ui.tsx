@@ -311,6 +311,12 @@ export function Button({
   }[variant];
   return (
     <button
+      // A <button> with no type is a submit button. Inside a form that means
+      // every ordinary button — Cancel, Download, a tab switch — submits it and
+      // reloads the page. Set here once rather than remembered at each of the
+      // several dozen call sites; anything that really submits passes
+      // type="submit" of its own and overrides this through {...props}.
+      type="button"
       {...props}
       className={`inline-flex items-center justify-center gap-1.5 rounded-sm border px-3 py-1.5 text-[13px] font-medium transition-colors disabled:cursor-not-allowed ${styles} ${
         props.className ?? ''
