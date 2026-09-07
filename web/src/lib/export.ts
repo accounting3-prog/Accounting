@@ -59,6 +59,7 @@ export function exportFilename(
     } else if (filters.cardIds.length > 1) {
       parts.push(`${filters.cardIds.length}-cards`);
     }
+    if (filters.missing) parts.push(`missing ${filters.missing.replace(/_/g, ' ')}`);
     if (filters.currencies.length === 1) parts.push(filters.currencies[0]);
     if (filters.statuses.length === 1) parts.push(filters.statuses[0].replace(/_/g, '-'));
     if (filters.dateFrom || filters.dateTo)
@@ -80,6 +81,15 @@ interface Column {
 }
 
 export const EXPORT_COLUMNS: Column[] = [
+  /**
+   * First, and deliberately.
+   *
+   * Nothing else in the file identifies a row: two charges to the same supplier
+   * for the same amount on the same day are ordinary here, and 217 rows of the
+   * workbook share every identifying field. Without this the update import
+   * would have to guess, and a wrong guess writes to the wrong transaction.
+   */
+  { header: 'Ledger ID', get: (t) => t.id },
   { header: 'Card', get: (_t, c) => c?.name ?? '' },
   { header: 'Date', get: (t) => t.txn_date ?? '' },
   { header: 'Supplier', get: (t) => t.supplier ?? t.description ?? '' },
@@ -148,6 +158,7 @@ export function filterSummary(
   if (filters.dateFrom) bits.push(`from ${filters.dateFrom}`);
   if (filters.dateTo) bits.push(`to ${filters.dateTo}`);
   if (filters.source !== 'all') bits.push(`source: ${filters.source}`);
+  if (filters.missing) bits.push(`missing the ${filters.missing.replace(/_/g, ' ')}`);
   return `${count} transaction${count === 1 ? '' : 's'}${
     bits.length ? ` — ${bits.join('; ')}` : ' — no filters applied'
   }`;

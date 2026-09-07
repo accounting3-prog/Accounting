@@ -60,9 +60,15 @@ check("tab names are unique", len(set(names)) == len(names))
 
 
 def header_row(ws):
-    """Find the header by looking for the row whose first cell says 'Card'."""
+    """Find the header by looking for the row that names a known column.
+
+    Not by position, and not by "the first cell says Card" — that broke the day
+    a Ledger ID column was added in front of it. A header is a row containing a
+    header word, wherever that word happens to sit.
+    """
     for r in range(1, 12):
-        if ws.cell(row=r, column=1).value == "Card":
+        values = {str(ws.cell(row=r, column=c).value or "") for c in range(1, 40)}
+        if {"Ledger ID", "Card"} & values:
             return r
     raise AssertionError("no header row in " + ws.title)
 
@@ -182,6 +188,7 @@ for r in range(1, 12):
     if summary.cell(row=r, column=1).value == "Card":
         shead = r
         break
+# The summary tab has its own layout, with Card genuinely first.
 check("the summary tab has a header row", shead is not None)
 if shead:
     srows = [
@@ -235,8 +242,19 @@ check("the single sheet holds every transaction", len(rows2) == len(txns), str(l
 
 text = (out / "single.csv").read_text(encoding="utf-8-sig")
 reader = list(csv.reader(text.splitlines()))
-body = [r for r in reader if len(r) > 5 and r[0] != "Card"]
+# Locate the header, then count what follows it. Filtering on "the first cell
+# is not 'Card'" counted the header as a transaction once a Ledger ID column
+# went in front of it.
+csv_head = next(
+    (i for i, r in enumerate(reader) if r and ("Ledger ID" in r or "Card" in r)), None
+)
+check("the CSV has a header row", csv_head is not None)
+body = [r for r in reader[(csv_head or 0) + 1 :] if any(c.strip() for c in r)]
 check("the CSV holds every transaction", len(body) == len(txns), str(len(body)))
+check(
+    "and its header carries the ledger id",
+    csv_head is not None and "Ledger ID" in reader[csv_head],
+)
 
 print()
 if failures:

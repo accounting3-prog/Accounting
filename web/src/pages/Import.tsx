@@ -27,20 +27,24 @@ import {
   fieldClass,
   labelClass,
 } from '../components/ui';
-import { submitTransaction } from '../lib/api';
+import { submitTransaction, updateTransaction, type TransactionEdit } from '../lib/api';
 import { getCards, getTransactions, projectBalance } from '../lib/ledger';
 import { exportCardTemplate, TEMPLATE_BLANK_ROWS } from '../lib/export';
 import { formatDate } from '../lib/format';
 import {
   analyseSheet,
   buildRows,
+  buildUpdateRows,
   readFile,
+  UPDATABLE_LABEL,
   FIELD_LABELS,
   type ColumnMapping,
   type FieldKey,
   type ImportRow,
   type ParsedSheet,
   type SheetAnalysis,
+  type UpdatableField,
+  type UpdateRow,
 } from '../lib/importFile';
 import type { Card } from '../lib/types';
 
@@ -107,6 +111,17 @@ export function Import() {
   /** null = follow the default, which opens only when something is missing. */
   const [columnsOpen, setColumnsOpen] = useState<boolean | null>(null);
 
+  /**
+   * Adding writes rows that were not there; updating writes over rows that
+   * were. Two different jobs with two different risks, so they are two modes
+   * rather than one clever import that decides for itself.
+   */
+  const [mode, setMode] = useState<'add' | 'update'>('add');
+  const [updateField, setUpdateField] = useState<UpdatableField>('payment_ref');
+  const [updateOutcomes, setUpdateOutcomes] = useState<
+    { row: UpdateRow; ok: boolean; message: string }[] | null
+  >(null);
+
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [outcomes, setOutcomes] = useState<Outcome[] | null>(null);
@@ -124,6 +139,7 @@ export function Import() {
     setExcluded(new Set());
     setColumnsOpen(null);
     setOutcomes(null);
+    setUpdateOutcomes(null);
     setBlockedBy(null);
   };
 
@@ -168,6 +184,19 @@ export function Import() {
     if (!sheet || headerRow < 0) return [];
     return buildRows(sheet, headerRow, mapping, { dayFirst, existing, cardId });
   }, [sheet, headerRow, mapping, dayFirst, existing, cardId]);
+
+  const updateRows: UpdateRow[] = useMemo(() => {
+    if (mode !== 'update' || !sheet || headerRow < 0 || !cardId) return [];
+    return buildUpdateRows(sheet, headerRow, mapping, {
+      field: updateField,
+      existing,
+      cardId,
+    });
+  }, [mode, sheet, headerRow, mapping, updateField, existing, cardId]);
+
+  const updateReady = updateRows.filter((r) => r.include);
+  const updateBlocked = updateRows.filter((r) => r.errors.length);
+  const updateUnchanged = updateRows.filter((r) => r.unchanged);
 
   const matched = MAPPABLE.filter((f) => mapping[f] !== undefined).map(
     (f) => [f, mapping[f] as number] as const,
@@ -260,6 +289,44 @@ export function Import() {
       }
     }
     setOutcomes(results);
+    setRunning(false);
+    if (results.some((r) => r.ok)) reload();
+  };
+
+  const runUpdate = async () => {
+    if (!card || running || !updateReady.length) return;
+    setRunning(true);
+    setProgress(0);
+    setBlockedBy(null);
+    const results: { row: UpdateRow; ok: boolean; message: string }[] = [];
+    for (let i = 0; i < updateReady.length; i++) {
+      const row = updateReady[i];
+      // Only the one field is sent. update_transaction leaves anything it is
+      // not given exactly as it was, and records the before and after.
+      // Typed as the edit it is, not cast. Every other field of
+      // TransactionEdit is optional and stays absent, and update_transaction
+      // leaves anything it is not given exactly as it was.
+      const patch: TransactionEdit = {
+        p_id: row.id as string,
+        p_rationale:
+          `${UPDATABLE_LABEL[updateField]} filled in from ${fileName ?? 'an uploaded file'}, ` +
+          `row ${row.sourceRow}. No other field was sent.`,
+        [`p_${updateField}`]: row.value,
+      };
+
+      const result = await updateTransaction(patch);
+      results.push({
+        row,
+        ok: result.ok,
+        message: result.ok ? row.value : result.error,
+      });
+      setProgress(i + 1);
+      if (!result.ok && /only a named admin|42501|permission denied|not connected/i.test(result.error)) {
+        setBlockedBy(result.error);
+        break;
+      }
+    }
+    setUpdateOutcomes(results);
     setRunning(false);
     if (results.some((r) => r.ok)) reload();
   };
@@ -373,14 +440,76 @@ export function Import() {
                 </Field>
               </div>
 
-              {card && <CardConvention card={card} note={analysis?.directionNote ?? ''} />}
-              {card && <BlankSheetLink card={card} />}
+              <div className="mt-4 max-w-lg">
+                <span className={labelClass}>What this file is for</span>
+                <div className="mt-1.5 space-y-2">
+                  <label className="flex items-start gap-2 text-[13px]">
+                    <input
+                      type="radio"
+                      checked={mode === 'add'}
+                      onChange={() => { setMode('add'); setUpdateOutcomes(null); }}
+                      className="mt-0.5 accent-[#1f4a73]"
+                    />
+                    <span>
+                      <span className="font-medium text-ink">Adding new transactions</span>
+                      <span className="block text-xs text-ink-muted">
+                        Rows that are not in the ledger yet. Anything that looks like it
+                        already is gets flagged and left out.
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 text-[13px]">
+                    <input
+                      type="radio"
+                      checked={mode === 'update'}
+                      onChange={() => { setMode('update'); setOutcomes(null); }}
+                      className="mt-0.5 accent-[#1f4a73]"
+                    />
+                    <span>
+                      <span className="font-medium text-ink">
+                        Filling in one field on rows that are already here
+                      </span>
+                      <span className="block text-xs text-ink-muted">
+                        Export the rows missing something, type it in, bring the file
+                        back. Nothing but that one column is written — no amount, no
+                        date, no new row.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+
+                {mode === 'update' && (
+                  <div className="mt-3 max-w-xs">
+                    <Field label="Field to fill in" required>
+                      <select
+                        value={updateField}
+                        onChange={(e) => {
+                          setUpdateField(e.target.value as UpdatableField);
+                          setUpdateOutcomes(null);
+                        }}
+                        className={fieldClass}
+                      >
+                        {(Object.keys(UPDATABLE_LABEL) as UpdatableField[]).map((f) => (
+                          <option key={f} value={f}>
+                            {UPDATABLE_LABEL[f]}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
+                )}
+              </div>
+
+              {card && mode === 'add' && (
+                <CardConvention card={card} note={analysis?.directionNote ?? ''} />
+              )}
+              {card && mode === 'add' && <BlankSheetLink card={card} />}
             </div>
           </Panel>
         )}
 
         {/* --------------------------------------------------- how it read */}
-        {sheet && card && (
+        {sheet && card && mode === 'add' && (
           <Panel
             title="3. How the file was read"
             description="Change anything here that is wrong before importing."
@@ -494,7 +623,7 @@ export function Import() {
         )}
 
         {/* -------------------------------------------------- the review */}
-        {sheet && card && headerRow >= 0 && (
+        {sheet && card && headerRow >= 0 && mode === 'add' && (
           <Panel
             title="4. Review"
             description="Untick anything that should not be imported."
@@ -643,6 +772,171 @@ export function Import() {
                 </table>
               </div>
             )}
+          </Panel>
+        )}
+
+        {/* ------------------------------------------ updating one field */}
+        {sheet && card && headerRow >= 0 && mode === 'update' && (
+          <Panel
+            title={`3. Fill in the ${UPDATABLE_LABEL[updateField].toLowerCase()}`}
+            description="Each line is matched to a ledger row by its Ledger ID, and everything else in the file is compared against what the ledger holds. Only the one column is written."
+            action={
+              <Button
+                variant="primary"
+                disabled={!updateReady.length || running}
+                onClick={() => void runUpdate()}
+              >
+                {running
+                  ? `Updating ${progress} of ${updateReady.length}…`
+                  : `Update ${updateReady.length} row${updateReady.length === 1 ? '' : 's'}`}
+              </Button>
+            }
+          >
+            <div className="border-b border-line px-4 py-3">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px]">
+                <span>
+                  <span className="tnum font-semibold text-ink">{updateReady.length}</span>{' '}
+                  <span className="text-ink-muted">to fill in</span>
+                </span>
+                {updateUnchanged.length > 0 && (
+                  <span className="text-ink-muted">
+                    <span className="tnum font-semibold">{updateUnchanged.length}</span> already
+                    say what the file says
+                  </span>
+                )}
+                {updateBlocked.length > 0 && (
+                  <span className="text-negative">
+                    <span className="tnum font-semibold">{updateBlocked.length}</span> stopped
+                  </span>
+                )}
+              </div>
+              <p className="mt-2 text-xs text-ink-muted">
+                No amount, date, supplier or currency is sent. A line whose other columns
+                disagree with the ledger is stopped rather than partly applied, so a figure
+                edited by accident in the spreadsheet is reported instead of quietly ignored.
+              </p>
+            </div>
+
+            {updateRows.length === 0 ? (
+              <EmptyState
+                title="Nothing to update"
+                description="This sheet has no rows under its header."
+              />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[52rem] border-collapse text-[13px]">
+                  <thead>
+                    <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-ink-faint">
+                      <th className="px-3 py-2 font-medium">Row</th>
+                      <th className="px-3 py-2 font-medium">Transaction</th>
+                      <th className="px-3 py-2 text-right font-medium">AED</th>
+                      <th className="px-3 py-2 font-medium">Now</th>
+                      <th className="px-3 py-2 font-medium">Becomes</th>
+                      <th className="px-3 py-2 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {updateRows.map((r) => (
+                      <tr
+                        key={r.sourceRow}
+                        className={`border-b border-line-soft ${
+                          r.errors.length ? 'bg-negative-soft/40' : ''
+                        }`}
+                      >
+                        <td className="tnum px-3 py-2 text-ink-faint">{r.sourceRow}</td>
+                        <td className="px-3 py-2">
+                          {r.existing ? (
+                            <>
+                              <div className="truncate text-ink">
+                                {r.existing.supplier ?? r.existing.description ?? '—'}
+                              </div>
+                              <div className="text-xs text-ink-faint">
+                                {formatDate(r.existing.txn_date)}
+                              </div>
+                            </>
+                          ) : (
+                            <span className="text-ink-faint">{r.id ?? '(no id)'}</span>
+                          )}
+                        </td>
+                        <td className="tnum px-3 py-2 text-right">
+                          {r.existing ? <Money amount={r.existing.amount_aed} code={false} /> : '—'}
+                        </td>
+                        <td className="px-3 py-2 text-ink-muted">{r.current || '—'}</td>
+                        <td className="px-3 py-2 font-medium text-ink">{r.value || '—'}</td>
+                        <td className="px-3 py-2">
+                          {r.errors.length ? (
+                            <div className="space-y-1">
+                              {r.errors.map((e, n) => (
+                                <div key={n} className="text-xs text-negative">
+                                  {e}
+                                </div>
+                              ))}
+                              {r.conflicts.map((c, n) => (
+                                <div key={`c${n}`} className="text-xs text-negative">
+                                  {c.field}: file says {c.sheet}, ledger says {c.ledger}
+                                </div>
+                              ))}
+                            </div>
+                          ) : r.unchanged ? (
+                            <Tag>Already set</Tag>
+                          ) : (
+                            <Tag tone="accent">Will be written</Tag>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
+        )}
+
+        {/* ---------------------------------------------- update outcome */}
+        {updateOutcomes && (
+          <Panel title="What was written">
+            <div className="space-y-3 px-4 py-4">
+              <p className="text-[13px]">
+                <span className="tnum font-semibold text-ink">
+                  {updateOutcomes.filter((o) => o.ok).length}
+                </span>{' '}
+                updated
+                {updateOutcomes.some((o) => !o.ok) && (
+                  <>
+                    ,{' '}
+                    <span className="tnum font-semibold text-negative">
+                      {updateOutcomes.filter((o) => !o.ok).length}
+                    </span>{' '}
+                    refused
+                  </>
+                )}
+                . Only the {UPDATABLE_LABEL[updateField].toLowerCase()} changed; every balance is
+                exactly as it was.
+              </p>
+              {blockedBy && (
+                <Notice tone="negative" title="Stopped early">
+                  {blockedBy}
+                </Notice>
+              )}
+              {updateOutcomes.some((o) => !o.ok) && (
+                <Notice tone="negative" title="Some rows were not updated">
+                  <ul className="mt-1 space-y-1">
+                    {updateOutcomes
+                      .filter((o) => !o.ok)
+                      .slice(0, 10)
+                      .map((o) => (
+                        <li key={o.row.sourceRow}>
+                          Row {o.row.sourceRow} — {o.message}
+                        </li>
+                      ))}
+                  </ul>
+                </Notice>
+              )}
+              <p className="text-[13px] text-ink-muted">
+                Each change is recorded in the history with what it was, what it became, and the
+                file and row it came from.
+              </p>
+            </div>
           </Panel>
         )}
 

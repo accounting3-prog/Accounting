@@ -212,9 +212,12 @@ try {
   );
   check('nothing was written by the public key', publicLeftovers === 0);
 
+  // Counted before the attempt rather than written down here. A hard-coded
+  // total stops testing anything the day a row is legitimately added, and then
+  // fails for that reason instead of for the reason it exists.
   const [{ n: stillThere }] = await q(client, 'select count(*)::int n from transactions');
-  check('all 1,949 transactions intact after the delete attempt', stillThere === 1949,
-        `${stillThere} rows`);
+  check(`all ${beforeDelete.toLocaleString()} transactions intact after the delete attempt`,
+        stillThere === beforeDelete, `${stillThere} rows`);
 
   console.log('\n' + '='.repeat(92));
   console.log(

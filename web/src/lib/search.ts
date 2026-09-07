@@ -63,7 +63,28 @@ export interface Filters {
   dateFrom: string;
   dateTo: string;
   source: SourceFilter;
+  /**
+   * Rows where one particular field was never filled in.
+   *
+   * The point is the round trip: find every row missing a payment reference,
+   * export them, type the references into the sheet, and bring them back. The
+   * same shape works for any field that is optional but wanted eventually.
+   */
+  missing: MissingField;
 }
+
+export type MissingField = '' | 'payment_ref' | 'req_number' | 'invoice' | 'lpo_number' | 'currency';
+
+export const MISSING_LABEL: Record<Exclude<MissingField, ''>, string> = {
+  payment_ref: 'payment reference',
+  req_number: 'request number',
+  invoice: 'invoice',
+  lpo_number: 'LPO number',
+  currency: 'original currency',
+};
+
+/** Blank, absent, or whitespace all count as "not filled in". */
+const isBlank = (v: string | undefined | null): boolean => !v || v.trim() === '';
 
 export const EMPTY_FILTERS: Filters = {
   query: '',
@@ -75,6 +96,7 @@ export const EMPTY_FILTERS: Filters = {
   dateFrom: '',
   dateTo: '',
   source: 'all',
+  missing: '',
 };
 
 export function isFiltered(f: Filters): boolean {
@@ -87,7 +109,8 @@ export function isFiltered(f: Filters): boolean {
     f.suppliers.length > 0 ||
     f.dateFrom !== '' ||
     f.dateTo !== '' ||
-    f.source !== 'all'
+    f.source !== 'all' ||
+    f.missing !== ''
   );
 }
 
@@ -123,6 +146,12 @@ export function applyFilters(
 
     if (f.dateFrom && (!t.txn_date || t.txn_date < f.dateFrom)) return false;
     if (f.dateTo && (!t.txn_date || t.txn_date > f.dateTo)) return false;
+
+    if (f.missing === 'payment_ref' && !isBlank(t.payment_ref)) return false;
+    if (f.missing === 'req_number' && !isBlank(t.req_number)) return false;
+    if (f.missing === 'invoice' && !isBlank(t.invoice)) return false;
+    if (f.missing === 'lpo_number' && !isBlank(t.lpo_number)) return false;
+    if (f.missing === 'currency' && !isBlank(t.currency)) return false;
 
     if (f.source !== 'all') {
       // Everything currently in the ledger came from the workbook; a row with

@@ -258,6 +258,30 @@ export function Transactions() {
                 <option value="imported">Imported from workbook</option>
                 <option value="manual">Entered manually</option>
               </select>
+
+              {/* The first half of the fill-in-the-blanks round trip: find the
+                  rows missing something, export them, type it in, bring them
+                  back through Import in update mode. */}
+              <span className={`${labelClass} mt-3 block`}>Missing a field</span>
+              <select
+                value={filters.missing}
+                onChange={(e) => update({ missing: e.target.value as Filters['missing'] })}
+                className={`${fieldClass} mt-1.5`}
+              >
+                <option value="">Not filtered</option>
+                <option value="payment_ref">No payment reference</option>
+                <option value="req_number">No request number</option>
+                <option value="invoice">No invoice</option>
+                <option value="lpo_number">No LPO number</option>
+                <option value="currency">No original currency</option>
+              </select>
+              {filters.missing && (
+                <p className="mt-1.5 text-xs text-ink-muted">
+                  Export these, fill the column in, then bring the file back on
+                  the Import page in <span className="font-medium text-ink">update</span> mode.
+                  Only that column is written.
+                </p>
+              )}
             </div>
 
             <div>

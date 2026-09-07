@@ -364,13 +364,33 @@ try {
     (k) => !live.some((r) => r.dedup_key === k),
   );
   check('no imported row has gone missing', missingFromDb.length, 0);
-  check('no row exists that was not imported',
-        live.length - importStatus.size, 0);
+
+  // A row that is not from the workbook is not a fault — the system is in use,
+  // and rows get added through the form and the file importer. What must hold
+  // is that each one came in through the audited path and can be accounted for,
+  // so they are counted against the history rather than against a fixed total.
+  // The old assertion was `live.length === importStatus.size`, which failed the
+  // first time anybody used the app for its purpose.
+  const added = await q(
+    client,
+    `select t.id, c.name as card, t.source_row,
+            (select count(*)::int from transaction_corrections tc
+              where tc.transaction_id = t.id and tc.action = 'created') as logged
+       from transactions t join cards c on c.id = t.card_id
+      where t.source_sheet is null`,
+  );
+  const unaccounted = added.filter((r) => r.logged === 0);
+  if (added.length)
+    console.log(`      ${added.length} row(s) entered since the import, each with a history entry`);
+  check('every row not from the workbook was entered through the audited path',
+        unaccounted.length, 0,
+        unaccounted.map((r) => `${r.card} ${r.id.slice(0, 8)}`).join(', '));
 
   const [{ n: totalDb }] = await q(client, 'select count(*)::int n from transactions');
   const totalExtract = extraction.reduce((a, c) => a + c.transactions.length, 0);
   console.log('');
-  check('total rows in the database', totalDb, totalExtract);
+  check('every extracted row is still present, plus whatever was added since',
+        totalDb - added.length, totalExtract);
 
   /* --------------------------------------------- currencies never cross-added */
 

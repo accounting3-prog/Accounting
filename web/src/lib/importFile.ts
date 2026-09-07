@@ -258,7 +258,8 @@ export type FieldKey =
   | 'payment_ref'
   | 'client'
   | 'sales_operation'
-  | 'notes';
+  | 'notes'
+  | 'ledger_id';
 
 export const FIELD_LABELS: Record<FieldKey, string> = {
   date: 'Date',
@@ -278,6 +279,7 @@ export const FIELD_LABELS: Record<FieldKey, string> = {
   client: 'Client',
   sales_operation: 'Sales operation',
   notes: 'Notes',
+  ledger_id: 'Ledger ID',
 };
 
 /**
@@ -316,6 +318,7 @@ const ALIASES: { field: FieldKey; patterns: RegExp[] }[] = [
   { field: 'client', patterns: [/^client$/i] },
   { field: 'sales_operation', patterns: [/^sales\s*operation$/i] },
   { field: 'notes', patterns: [/^notes?$/i, /^debit\s*notes$/i, /^comments?$/i, /^remarks?$/i, /^commissionable.*$/i] },
+  { field: 'ledger_id', patterns: [/^ledger\s*id$/i, /^transaction\s*id$/i, /^id$/i] },
   {
     field: 'signed_amount',
     // 'AED settlement' is this app's own export header: one signed column
@@ -924,6 +927,171 @@ export function buildRows(
     if (prior !== undefined)
       row.warnings.push(`Identical to row ${prior} of this file.`);
     else seen.set(key, row.sourceRow);
+  }
+
+  return out;
+}
+
+/* ------------------------------------------------------- updating, not adding
+ *
+ * A different job from importing new rows, and a different risk. Adding writes
+ * a row that was not there; updating writes over one that was, so the danger is
+ * not a missing transaction but a corrupted one.
+ *
+ * Three rules follow from that:
+ *
+ *   1. Rows are matched by the ledger's own id, never by content. Two charges
+ *      to one supplier for one amount on one day are ordinary here — 217 rows
+ *      of the workbook share every identifying field — so matching on content
+ *      would eventually write to the wrong transaction.
+ *   2. Only the chosen field is written. Everything else in the file is read
+ *      solely to be compared.
+ *   3. If anything else HAS changed, the row is stopped and the difference is
+ *      shown. Silently ignoring an edited amount would teach people the file
+ *      is authoritative when it is not.
+ */
+
+export type UpdatableField = 'payment_ref' | 'req_number' | 'invoice' | 'lpo_number';
+
+export const UPDATABLE_LABEL: Record<UpdatableField, string> = {
+  payment_ref: 'Payment reference',
+  req_number: 'Request number',
+  invoice: 'Invoice',
+  lpo_number: 'LPO number',
+};
+
+/** Which export column carries each updatable field. */
+const UPDATE_SOURCE: Record<UpdatableField, FieldKey> = {
+  payment_ref: 'payment_ref',
+  req_number: 'req_number',
+  invoice: 'invoice',
+  lpo_number: 'lpo_number',
+};
+
+export interface UpdateRow {
+  sourceRow: number;
+  include: boolean;
+  /** The ledger row this line refers to, if it could be resolved. */
+  id: string | null;
+  existing?: Transaction;
+  /** What the file says the field should become. */
+  value: string;
+  /** What the ledger holds now. */
+  current: string;
+  /** No id, no such row, or the row is not this card's. */
+  errors: string[];
+  /** Fields other than the one being updated that no longer match. */
+  conflicts: { field: string; sheet: string; ledger: string }[];
+  /** Nothing to do: the file says what the ledger already says. */
+  unchanged: boolean;
+}
+
+const norm = (v: unknown): string => String(v ?? '').trim();
+const money = (n: number | null | undefined) =>
+  n === null || n === undefined ? '' : Number(n).toFixed(2);
+
+export interface UpdateOptions {
+  field: UpdatableField;
+  /** Every transaction currently loaded, to resolve ids against. */
+  existing: Transaction[];
+  /** Rows must belong to this card, or the file is being applied to the wrong one. */
+  cardId: string;
+}
+
+export function buildUpdateRows(
+  sheet: ParsedSheet,
+  headerRow: number,
+  mapping: ColumnMapping,
+  opts: UpdateOptions,
+): UpdateRow[] {
+  const byId = new Map(opts.existing.map((t) => [t.id, t]));
+  const out: UpdateRow[] = [];
+  const seen = new Map<string, number>();
+
+  const idCol = mapping.ledger_id;
+  const valueCol = mapping[UPDATE_SOURCE[opts.field]];
+
+  for (let r = headerRow + 1; r < sheet.rows.length; r++) {
+    const row = sheet.rows[r] ?? [];
+    if (!row.some((c) => norm(c) !== '')) continue;
+
+    const built: UpdateRow = {
+      sourceRow: r + 1,
+      include: true,
+      id: null,
+      value: valueCol === undefined ? '' : norm(row[valueCol]),
+      current: '',
+      errors: [],
+      conflicts: [],
+      unchanged: false,
+    };
+
+    if (idCol === undefined) {
+      built.errors.push('This file has no Ledger ID column, so there is no way to say which row to update.');
+      built.include = false;
+      out.push(built);
+      continue;
+    }
+
+    const id = norm(row[idCol]);
+    built.id = id || null;
+    if (!id) {
+      built.errors.push('No ledger id on this line.');
+    } else if (seen.has(id)) {
+      built.errors.push(`The same ledger id appears on row ${seen.get(id)} of this file.`);
+    } else {
+      seen.set(id, built.sourceRow);
+      const existing = byId.get(id);
+      if (!existing) {
+        built.errors.push('No transaction in the ledger has this id.');
+      } else if (existing.cardId !== opts.cardId) {
+        built.errors.push('That transaction belongs to a different card.');
+      } else {
+        built.existing = existing;
+        built.current = norm(
+          opts.field === 'payment_ref' ? existing.payment_ref
+          : opts.field === 'req_number' ? existing.req_number
+          : opts.field === 'invoice' ? existing.invoice
+          : existing.lpo_number,
+        );
+
+        // Everything the file also carries is compared, and any difference
+        // stops the row. This is the check that makes "no change in the costs"
+        // true rather than merely intended.
+        const compare: [string, number | undefined, string][] = [
+          ['Date', mapping.date, norm(existing.txn_date)],
+          ['AED settlement', mapping.signed_amount, money(existing.amount_aed)],
+          ['Supplier', mapping.supplier, norm(existing.supplier ?? existing.description)],
+          ['Original currency', mapping.currency, norm(existing.currency)],
+          ['Original amount', mapping.original_amount, money(existing.original_amount)],
+        ];
+        for (const [label, col, ledgerValue] of compare) {
+          if (col === undefined) continue;
+          const sheetValue = norm(row[col]);
+          if (sheetValue === '' && ledgerValue === '') continue;
+          const same =
+            label === 'AED settlement' || label === 'Original amount'
+              ? Math.abs(Number(sheetValue || 0) - Number(ledgerValue || 0)) < 0.005
+              : sheetValue.toUpperCase() === ledgerValue.toUpperCase();
+          if (!same)
+            built.conflicts.push({ field: label, sheet: sheetValue || '(blank)', ledger: ledgerValue || '(blank)' });
+        }
+        if (built.conflicts.length) {
+          built.errors.push(
+            'This line disagrees with the ledger on something other than the field being updated.',
+          );
+        }
+
+        if (!built.value) {
+          built.errors.push('Nothing to write: the field is still empty on this line.');
+        } else if (built.value === built.current) {
+          built.unchanged = true;
+        }
+      }
+    }
+
+    if (built.errors.length || built.unchanged) built.include = false;
+    out.push(built);
   }
 
   return out;
