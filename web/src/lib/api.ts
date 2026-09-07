@@ -266,7 +266,8 @@ export interface NewTransaction {
   p_amount_aed: number;
   p_supplier: string;
   p_req_number: string;
-  p_payment_ref: string;
+  /** Optional: 577 of the workbook's own rows carry none. Null, never ''. */
+  p_payment_ref: string | null;
   p_currency?: string | null;
   p_original_amount?: number | null;
   p_exchange_rate?: number | null;

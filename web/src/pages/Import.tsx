@@ -223,7 +223,9 @@ export function Import() {
         p_amount_aed: Math.abs(row.amountAed as number),
         p_supplier: row.supplier,
         p_req_number: row.reqNumber,
-        p_payment_ref: row.paymentRef,
+        // Empty means the sheet had no reference, which is allowed. Sent as
+        // null so the column never holds both '' and NULL for the same thing.
+        p_payment_ref: row.paymentRef?.trim() || null,
         p_currency: row.currency,
         p_original_amount: row.originalAmount,
         p_exchange_rate: row.rate,

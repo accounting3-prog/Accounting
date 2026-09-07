@@ -59,7 +59,7 @@ async function balance(cardId) {
 async function addTxn(cardId, opts) {
   const r = await client.query(
     `select create_transaction(
-       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) as id`,
+       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) as id`,
     [
       cardId,
       opts.date ?? '2026-09-04',
@@ -74,6 +74,7 @@ async function addTxn(cardId, opts) {
       opts.country ?? null,
       null, null, null, null, null, null, null,
       opts.needsReview ?? false,
+      opts.allowDuplicate ?? false,
     ],
   );
   return r.rows[0].id;
@@ -676,6 +677,63 @@ try {
       client.query('select revoke_admin($1)', [owners[0].user_id]));
   });
 
+  /* ================================= 3e. a transaction with no payment reference */
+
+  console.log('\n\n3e. A ROW WITH NO PAYMENT REFERENCE');
+  console.log('-'.repeat(94));
+
+  await scenario(async () => {
+    // 577 of the workbook's 1,948 rows have none, so this has to be ordinary
+    // rather than exceptional. What is checked is not that it saves, but that
+    // the three things keyed on the reference still work without one.
+    const card = cards[0];
+    const start = await balance(card.id);
+
+    const id = await addTxn(card.id, {
+      kind: 'purchase', amount: 640, date: '2026-09-03',
+      supplier: 'NO REFERENCE SUPPLIER', paymentRef: '',
+    });
+    check('a purchase with no payment reference saves', Boolean(id));
+    check('and it moves the balance like any other',
+          near(await balance(card.id), start + card.sign * -640),
+          `${money(start)} -> ${money(await balance(card.id))}`);
+
+    const [row] = await q(client,
+      'select payment_ref, occurrence, dedup_key from transactions where id = $1', [id]);
+    check('the column holds NULL, not an empty string',
+          row.payment_ref === null, JSON.stringify(row.payment_ref));
+
+    // upper(NULL) is NULL and NULL = anything is NULL, so a null reference
+    // would silently defeat the double-submit guard.
+    const again = await addTxn(card.id, {
+      kind: 'purchase', amount: 640, date: '2026-09-03',
+      supplier: 'NO REFERENCE SUPPLIER', paymentRef: '',
+    });
+    check('submitting the same form twice still returns the first row, not a second',
+          again === id, again === id ? '' : 'A SECOND ROW WAS WRITTEN');
+
+    // concat_ws skips a null argument rather than writing an empty field, which
+    // would shift every later field in the signature by one position.
+    const deliberate = await addTxn(card.id, {
+      kind: 'purchase', amount: 640, date: '2026-09-03',
+      supplier: 'NO REFERENCE SUPPLIER', paymentRef: '', allowDuplicate: true,
+    });
+    const [second] = await q(client,
+      'select occurrence, dedup_key from transactions where id = $1', [deliberate]);
+    check('a deliberate repeat is counted as the second occurrence',
+          Number(second.occurrence) === 2, String(second.occurrence));
+    check('and gets its own dedup key', second.dedup_key !== row.dedup_key);
+
+    // The reference is still stored when there is one.
+    const withRef = await addTxn(card.id, {
+      kind: 'purchase', amount: 641, date: '2026-09-03',
+      supplier: 'NO REFERENCE SUPPLIER', paymentRef: 'PR-KEPT-1',
+    });
+    const [kept] = await q(client, 'select payment_ref from transactions where id = $1', [withRef]);
+    check('a reference that is given is still kept', kept.payment_ref === 'PR-KEPT-1',
+          String(kept.payment_ref));
+  });
+
   /* ================================================== 4. what must be refused */
 
   console.log('\n\n4. WHAT THE SYSTEM MUST REFUSE');
@@ -695,9 +753,6 @@ try {
   await scenario(() =>
     expectRefused('a missing request number', () =>
       addTxn(anyCard, { kind: 'purchase', amount: 100, req: '' })));
-  await scenario(() =>
-    expectRefused('a missing payment reference', () =>
-      addTxn(anyCard, { kind: 'purchase', amount: 100, paymentRef: '' })));
   await scenario(() =>
     expectRefused('a currency with no original amount', () =>
       addTxn(anyCard, { kind: 'purchase', amount: 100, currency: 'EUR', rate: 4 })));

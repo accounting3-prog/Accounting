@@ -103,7 +103,6 @@ function validate(f: FormState): Errors {
 
   if (!f.supplier.trim()) e.supplier = 'Enter the supplier or merchant name.';
   if (!f.reqNumber.trim()) e.reqNumber = 'Enter the request number.';
-  if (!f.paymentRef.trim()) e.paymentRef = 'Enter the payment reference number.';
 
   if (f.supplierCountry && !/^\d{3}$/.test(f.supplierCountry.trim()))
     e.supplierCountry = 'ISO-3166 numeric code is three digits, e.g. 784.';
@@ -164,7 +163,7 @@ export function AddTransaction() {
       supplier_raw: f.supplierCountry
         ? `${f.supplier.trim()} ${f.supplierCountry.trim()}`
         : f.supplier.trim(),
-      payment_ref: f.paymentRef.trim(),
+      payment_ref: f.paymentRef.trim() || undefined,
       req_number: f.reqNumber.trim(),
       direction: direction ?? undefined,
     });
@@ -188,7 +187,7 @@ export function AddTransaction() {
       p_amount_aed: Math.abs(Number(f.amountAed)),
       p_supplier: f.supplier.trim(),
       p_req_number: f.reqNumber.trim(),
-      p_payment_ref: f.paymentRef.trim(),
+      p_payment_ref: f.paymentRef.trim() || null,
       p_currency: f.currency || null,
       p_original_amount: f.originalAmount ? Number(f.originalAmount) : null,
       p_exchange_rate: f.exchangeRate ? Number(f.exchangeRate) : null,
@@ -314,7 +313,8 @@ export function AddTransaction() {
                 />
               </Field>
 
-              <Field label="Payment reference number" required error={err('paymentRef')}>
+              {/* Optional: 577 of the workbook's own 1,948 rows carry none. */}
+              <Field label="Payment reference number" error={err('paymentRef')}>
                 <input
                   value={f.paymentRef}
                   onChange={(e) => set('paymentRef', e.target.value)}
