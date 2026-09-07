@@ -658,3 +658,75 @@ export async function getCardBalanceNow(
     return { ok: false, error: 'The database returned no balance for this card.' };
   return { ok: true, ledgerBalance: value };
 }
+
+
+/* ------------------------------------------------- recording what an import did */
+
+export interface LeftOutRow {
+  source_row: number;
+  supplier: string;
+  amount: number | null;
+  /** refused by the database, stopped by the parser, or unticked by hand. */
+  kind: 'refused' | 'stopped' | 'unticked';
+  detail: string;
+}
+
+/**
+ * Opens a record of this import before anything is written.
+ *
+ * A file of 36 rows once produced 31 transactions and no way to find out what
+ * happened to the other five. The screen said so while it was on screen; the
+ * database said nothing at all. This is the database saying it.
+ */
+export async function beginImportBatch(
+  source: string,
+  rowCount: number,
+): Promise<string | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.rpc('begin_import_batch', {
+    p_source: source,
+    p_row_count: rowCount,
+  });
+  if (error) return null;
+  return typeof data === 'string' ? data : null;
+}
+
+/** Closes it, listing every row of the file the ledger did not take. */
+export async function finishImportBatch(
+  batchId: string,
+  inserted: number,
+  leftOut: LeftOutRow[],
+  cardName: string,
+): Promise<void> {
+  if (!supabase) return;
+  await supabase.rpc('finish_import_batch', {
+    p_batch_id: batchId,
+    p_inserted: inserted,
+    p_left_out: leftOut,
+    p_card_name: cardName,
+  });
+}
+
+export interface ImportHistoryRow {
+  batch_id: string;
+  source: string;
+  created_at: string;
+  imported_by: string;
+  rows_in_file: number;
+  imported: number;
+  left_out: number;
+  left_out_rows: { source_row: number | null; kind: string; detail: string }[];
+}
+
+export async function listImportHistory(): Promise<
+  { ok: true; rows: ImportHistoryRow[] } | { ok: false; error: string }
+> {
+  if (!supabase) return { ok: false, error: 'Not connected to Supabase.' };
+  const { data, error } = await supabase
+    .from('import_history')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(100);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, rows: (data ?? []) as ImportHistoryRow[] };
+}

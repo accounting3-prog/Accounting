@@ -28,9 +28,12 @@ import {
   labelClass,
 } from '../components/ui';
 import {
+  beginImportBatch,
+  finishImportBatch,
   getCardBalanceNow,
   submitTransaction,
   updateTransaction,
+  type LeftOutRow,
   type TransactionEdit,
 } from '../lib/api';
 import { getCards, getTransactions, projectBalance } from '../lib/ledger';
@@ -264,22 +267,23 @@ export function Import() {
     setBlockedBy(null);
 
     const attempting = new Set(included.map((r) => r.sourceRow));
-    setRunSummary({
-      inFile: rows.length,
-      attempted: included.length,
-      leftOut: rows
-        .filter((r) => !attempting.has(r.sourceRow))
-        .map((r) => ({
-          sourceRow: r.sourceRow,
-          supplier: r.supplier,
-          amount: r.amountAed,
-          why: r.errors.length
-            ? r.errors[0]
-            : r.duplicateOf
-              ? 'Looks like a transaction already in the ledger, so it was left unticked.'
-              : 'Unticked before importing.',
-        })),
-    });
+    const notAttempted = rows
+      .filter((r) => !attempting.has(r.sourceRow))
+      .map((r) => ({
+        sourceRow: r.sourceRow,
+        supplier: r.supplier,
+        amount: r.amountAed,
+        why: r.errors.length
+          ? r.errors[0]
+          : r.duplicateOf
+            ? 'Looks like a transaction already in the ledger, so it was left unticked.'
+            : 'Unticked before importing.',
+      }));
+    setRunSummary({ inFile: rows.length, attempted: included.length, leftOut: notAttempted });
+
+    // Opened before anything is written, so a run that stops halfway is still
+    // on record with what it had and had not done.
+    const batchId = await beginImportBatch(fileName ?? 'an uploaded file', rows.length);
 
     const results: Outcome[] = [];
     for (let i = 0; i < included.length; i++) {
@@ -329,6 +333,49 @@ export function Import() {
     }
     setOutcomes(results);
     setRunning(false);
+
+    // Every row of the file the ledger did not take, and why. A row left out on
+    // purpose and a row lost by accident look identical in a balance; they do
+    // not look identical in this record.
+    if (batchId) {
+      const leftOut: LeftOutRow[] = [
+        ...notAttempted.map((r) => ({
+          source_row: r.sourceRow,
+          supplier: r.supplier,
+          amount: r.amount,
+          kind: (/unticked/i.test(r.why) || /already in the ledger/i.test(r.why)
+            ? 'unticked'
+            : 'stopped') as LeftOutRow['kind'],
+          detail: r.why,
+        })),
+        ...results
+          .filter((o) => !o.ok)
+          .map((o) => ({
+            source_row: o.row.sourceRow,
+            supplier: o.row.supplier,
+            amount: o.row.amountAed,
+            kind: 'refused' as const,
+            detail: o.message,
+          })),
+        // A run stopped early never reached these rows at all.
+        ...included
+          .slice(results.length)
+          .map((r) => ({
+            source_row: r.sourceRow,
+            supplier: r.supplier,
+            amount: r.amountAed,
+            kind: 'stopped' as const,
+            detail: 'The import stopped before reaching this row.',
+          })),
+      ];
+      await finishImportBatch(
+        batchId,
+        results.filter((r) => r.ok).length,
+        leftOut,
+        card.name,
+      );
+    }
+
     if (results.some((r) => r.ok)) reload();
   };
 

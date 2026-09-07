@@ -734,6 +734,81 @@ try {
           String(kept.payment_ref));
   });
 
+  /* ============================ 3f. an import accounts for every row of its file */
+
+  console.log('\n\n3f. AN IMPORT LEAVES A RECORD OF WHAT IT DID NOT TAKE');
+  console.log('-'.repeat(94));
+
+  await scenario(async () => {
+    // A file of 36 rows once produced 31 transactions, and the five that never
+    // arrived left no trace anywhere: not in transactions, and not in
+    // import_batches, because the browser importer never wrote to it. The
+    // balance was 64,297.17 short and the only way to ask why was to subtract
+    // two numbers and guess.
+    const card = cards[0];
+    const [{ id: batchId }] = await q(client,
+      `select begin_import_batch('e2e-file.xlsx', 5) as id`);
+    check('an import opens a batch before it writes', Boolean(batchId));
+
+    const id = await addTxn(card.id, {
+      kind: 'purchase', amount: 120, date: '2026-09-01', paymentRef: 'BATCH-1',
+      supplier: 'BATCH TEST SUPPLIER',
+    });
+    check('the one good row is written', Boolean(id));
+
+    const leftOut = JSON.stringify([
+      { source_row: 7,  supplier: 'HOTEL A', amount: -1000, kind: 'unticked',
+        detail: 'Looks like a transaction already in the ledger.' },
+      { source_row: 9,  supplier: 'HOTEL B', amount: -2000, kind: 'refused',
+        detail: 'A request number is required' },
+      { source_row: 12, supplier: 'HOTEL C', amount: -3000, kind: 'stopped',
+        detail: 'The import stopped before reaching this row.' },
+      { source_row: 25, supplier: 'HOTEL D', amount: -4000, kind: 'unticked',
+        detail: 'Unticked before importing.' },
+    ]);
+    const [{ finish_import_batch: recorded }] = await q(client,
+      `select finish_import_batch($1, 1, $2::jsonb, $3)`, [batchId, leftOut, card.name]);
+    check('every row it did not take is recorded', Number(recorded) === 4, String(recorded));
+
+    const [h] = await q(client,
+      `select rows_in_file, imported, left_out, left_out_rows from import_history where batch_id = $1`,
+      [batchId]);
+    check('the file size is on record', Number(h.rows_in_file) === 5, String(h.rows_in_file));
+    check('and what was taken from it', Number(h.imported) === 1, String(h.imported));
+    check('and what was not', Number(h.left_out) === 4, String(h.left_out));
+
+    // The whole point: the arithmetic has to close. Rows in the file must equal
+    // what was imported plus what was left out, or something went missing
+    // without anyone being told.
+    check('imported plus left out accounts for the whole file',
+          Number(h.imported) + Number(h.left_out) === Number(h.rows_in_file),
+          `${h.imported} + ${h.left_out} vs ${h.rows_in_file}`);
+
+    const kinds = h.left_out_rows.map((r) => r.kind).sort();
+    check('a refusal, a stop and an untick are told apart',
+          JSON.stringify(kinds) === JSON.stringify(['refused', 'stopped', 'unticked', 'unticked']),
+          kinds.join(', '));
+    check('each names the row it came from',
+          h.left_out_rows.every((r) => Number.isFinite(Number(r.source_row))),
+          h.left_out_rows.map((r) => r.source_row).join(', '));
+    check('and says why, in words',
+          h.left_out_rows.every((r) => String(r.detail).length > 10),
+          String(h.left_out_rows[0]?.detail ?? '').slice(0, 46));
+  });
+
+  await scenario(() =>
+    expectRefused('a viewer opening an import batch', async () => {
+      await client.query('reset role');
+      const viewer = (await q(client,
+        `select id from auth.users where id not in (select user_id from admins) limit 1`))[0]
+        ?? (await q(client,
+          `insert into auth.users (id, email) values (gen_random_uuid(), 'e2e-batch@example.test')
+           returning id`))[0];
+      await client.query('set local role authenticated');
+      await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [viewer.id]);
+      return client.query(`select begin_import_batch('sneaky.xlsx', 1)`);
+    }));
+
   /* ================================================== 4. what must be refused */
 
   console.log('\n\n4. WHAT THE SYSTEM MUST REFUSE');

@@ -31,7 +31,12 @@ import {
   Stat,
   Tag,
 } from '../components/ui';
-import { listChecks, type ChecksResult } from '../lib/api';
+import {
+  listChecks,
+  listImportHistory,
+  type ChecksResult,
+  type ImportHistoryRow,
+} from '../lib/api';
 import { formatCount } from '../lib/format';
 
 const num = (v: string | number) => Number(v);
@@ -40,11 +45,13 @@ export function Checks() {
   const [checks, setChecks] = useState<ChecksResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showExpected, setShowExpected] = useState(false);
+  const [imports, setImports] = useState<ImportHistoryRow[]>([]);
 
   const load = () => {
     setChecks(null);
     setError(null);
     listChecks().then((r) => (r.ok ? setChecks(r.checks) : setError(r.error)));
+    listImportHistory().then((r) => setImports(r.ok ? r.rows : []));
   };
   useEffect(load, []);
 
@@ -285,6 +292,61 @@ export function Checks() {
                   rows beyond the first. None of them was entered twice by this system.
                 </p>
               )}
+            </Panel>
+          )}
+
+          {/* ------------------------------------------- what imports left out */}
+          {imports.length > 0 && (
+            <Panel
+              title="Files that were imported"
+              description="What each file held, and what the ledger did not take from it. A balance that is short says nothing about why; this does."
+            >
+              <ul className="divide-y divide-line">
+                {imports.map((b) => (
+                  <li key={b.batch_id} className="px-4 py-3">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="text-[13px] font-medium text-ink">{b.source}</span>
+                      <span className="text-xs text-ink-faint">
+                        {new Date(b.created_at).toLocaleString('en-GB', {
+                          day: '2-digit',
+                          month: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}{' '}
+                        · {b.imported_by}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-4 text-[13px]">
+                      <span className="tnum text-ink-muted">
+                        {formatCount(b.rows_in_file)} rows in the file
+                      </span>
+                      <span className="tnum text-ink">
+                        {formatCount(b.imported)} imported
+                      </span>
+                      {b.left_out > 0 && (
+                        <span className="tnum font-medium text-review">
+                          {formatCount(b.left_out)} not imported
+                        </span>
+                      )}
+                    </div>
+                    {b.left_out_rows.length > 0 && (
+                      <ul className="mt-1.5 space-y-0.5">
+                        {b.left_out_rows.slice(0, 8).map((r, i) => (
+                          <li key={i} className="text-xs text-ink-muted">
+                            <span className="tnum">Row {r.source_row ?? '—'}</span> ·{' '}
+                            <span className="text-review">{r.kind}</span> · {r.detail}
+                          </li>
+                        ))}
+                        {b.left_out_rows.length > 8 && (
+                          <li className="text-xs text-ink-faint">
+                            …and {b.left_out_rows.length - 8} more.
+                          </li>
+                        )}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
             </Panel>
           )}
         </>
