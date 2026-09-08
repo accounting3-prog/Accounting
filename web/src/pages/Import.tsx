@@ -321,8 +321,12 @@ export function Import() {
             .filter(Boolean)
             .join(' — ') || null,
         // A row with a warning is imported for review rather than silently
-        // accepted, so the review queue picks it up.
+        // accepted, so the review queue picks it up — and it says what the
+        // warning actually was. The database's default sentence is about a
+        // missing currency, amount or rate, which was untrue of every row the
+        // importer ever flagged and taught people the queue was noise.
         p_needs_review: row.warnings.length > 0,
+        p_review_reason: row.warnings.join(' ') || null,
         // Two different reasons to bypass the database's two-minute
         // double-submit guard, and both are deliberate.
         //

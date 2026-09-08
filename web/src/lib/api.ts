@@ -281,6 +281,8 @@ export interface NewTransaction {
   p_description?: string | null;
   p_notes?: string | null;
   p_needs_review?: boolean;
+  /** Why, in the caller's words. Defaults to the manual-entry sentence. */
+  p_review_reason?: string | null;
   /**
    * Lets a row through the two-minute duplicate guard. Only set where the
    * duplicate was shown to a person and they said to import it anyway — the
