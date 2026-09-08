@@ -1,9 +1,12 @@
 /**
- * The 28 currencies present in the audited workbook.
+ * The currencies this ledger accepts: the 28 the audited workbook contained,
+ * plus any added deliberately since.
  *
  * This is a closed set, mirroring the `currencies` table. A code outside it is
  * shown as unrecognised rather than mapped to a best guess — a wrong currency
- * in a financial report is worse than a blank one.
+ * in a financial report is worse than a blank one. The cost of that rule is
+ * that a new currency must be added in both places, and the test below refuses
+ * to let the two drift apart.
  */
 
 export const CURRENCIES = {
@@ -35,6 +38,10 @@ export const CURRENCIES = {
   MUR: { name: 'Mauritian Rupee', minor: 2 },
   CAD: { name: 'Canadian Dollar', minor: 2 },
   NZD: { name: 'New Zealand Dollar', minor: 2 },
+  // Not in the workbook; added deliberately when it was first needed. Three
+  // minor units per ISO 4217 — the dinar divides into 1,000 fils, like the
+  // Kuwaiti, Bahraini, Omani and Jordanian dinars above.
+  IQD: { name: 'Iraqi Dinar', minor: 3 },
 } as const;
 
 export type Currency = keyof typeof CURRENCIES;

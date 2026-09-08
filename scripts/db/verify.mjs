@@ -297,6 +297,38 @@ try {
   );
   check('no AED transaction carries a conversion rate', aedWithRate, 0);
 
+  /**
+   * The currency list exists twice — in the database and in the app — and a
+   * closed set held in two places is a set that drifts.
+   *
+   * The consequence is asymmetric and worth naming. A code the app knows and
+   * the database does not means every row carrying it is refused at import,
+   * loudly. A code the database knows and the app does not means the importer
+   * calls it unrecognised, drops it, and carries the original amount away in a
+   * note — quietly, and the conversion is lost.
+   */
+  const dbCurrencies = (await q(client, 'select code, name, minor_units from currencies'))
+    .reduce((m, r) => m.set(r.code, r), new Map());
+  const appSource = await readFile('web/src/lib/currencies.ts', 'utf8');
+  const appCurrencies = new Map(
+    [...appSource.matchAll(/^\s*([A-Z]{3}):\s*\{\s*name:\s*'([^']+)',\s*minor:\s*(\d)/gm)]
+      .map((m) => [m[1], { name: m[2], minor_units: Number(m[3]) }]),
+  );
+
+  check('the app knows every currency the database does',
+        [...dbCurrencies.keys()].filter((c) => !appCurrencies.has(c)).join(', '), '');
+  check('and the database knows every currency the app does',
+        [...appCurrencies.keys()].filter((c) => !dbCurrencies.has(c)).join(', '), '');
+  const disagree = [...appCurrencies.entries()]
+    .filter(([code, a]) => {
+      const d = dbCurrencies.get(code);
+      return d && (d.name !== a.name || Number(d.minor_units) !== a.minor_units);
+    })
+    .map(([code, a]) => `${code}: app ${a.name}/${a.minor_units}, db ${dbCurrencies.get(code).name}/${dbCurrencies.get(code).minor_units}`);
+  check('and they agree on the name and the subdivision of each',
+        disagree.join('; '), '');
+  console.log(`      ${dbCurrencies.size} currencies, the same list on both sides`);
+
   const [{ n: dupKeys }] = await q(
     client,
     `select count(*)::int n from (
