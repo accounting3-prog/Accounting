@@ -304,11 +304,44 @@ try {
   );
   check('every dedup_key is unique', dupKeys, 0);
 
+  // Counted against the extraction, not against a number written here. 130 was
+  // right for the workbook alone and stopped being right the moment a statement
+  // with repeat charges was imported — the third frozen total in this suite to
+  // fail for being frozen rather than for being wrong.
+  //
+  // What must hold is that a repeat is kept as its own row with its own
+  // occurrence number, never merged into the first. So: every occurrence above 1
+  // has a sibling at occurrence 1 with the same content, and no number is
+  // skipped in between.
+  const repeatGroups = await q(
+    client,
+    `select card_id, txn_date, amount_aed,
+            coalesce(supplier_raw, '') as supplier,
+            coalesce(payment_ref, '')  as payment_ref,
+            coalesce(req_number, '')   as req_number,
+            count(*)::int                as copies,
+            max(occurrence)::int         as highest,
+            count(distinct occurrence)::int as distinct_numbers
+       from transactions
+      where entry_type = 'source_transaction' and status <> 'voided'
+      group by 1,2,3,4,5,6
+     having count(*) > 1`,
+  );
+  const badlyNumbered = repeatGroups.filter(
+    (g) => g.highest !== g.copies || g.distinct_numbers !== g.copies,
+  );
+  check('every repeated charge is numbered 1..n with none shared or skipped',
+        badlyNumbered.length, 0,
+        badlyNumbered.slice(0, 3)
+          .map((g) => `${g.supplier} x${g.copies} highest ${g.highest}`).join('; '));
+
   const [{ n: repeats }] = await q(
     client,
     'select count(*)::int n from transactions where occurrence > 1',
   );
-  check('genuine repeat charges kept apart', repeats, 130);
+  const extraCopies = repeatGroups.reduce((a, g) => a + (g.copies - 1), 0);
+  check('and the count of them agrees with the groups they came from',
+        repeats, extraCopies);
 
   const [{ n: repaired }] = await q(
     client,

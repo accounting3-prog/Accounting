@@ -397,9 +397,18 @@ try {
   check('every real import took a snapshot',
         batches.filter((b) => !b.dry_run).every((b) => b.has_snapshot),
         `${batches.filter((b) => !b.dry_run && !b.has_snapshot).length} without one`);
+  // Within one batch, not across all of them.
+  //
+  // Two uploads of the same file SHOULD each record that row 7 was left out —
+  // that is two facts about two imports, not one fact written twice. Grouping
+  // without the batch made the second upload of a file look like corruption of
+  // the first, and it fired the moment a file was re-uploaded to recover the
+  // rows the first attempt lost.
   const [{ n: anomalyDupes }] = await q(client,
-    `select count(*)::int n from (select card_name, source_row, kind from import_anomalies
-       group by 1,2,3 having count(*)>1) x`);
+    `select count(*)::int n from (
+        select batch_id, card_name, source_row, kind from import_anomalies
+         where source_row is not null
+         group by 1,2,3,4 having count(*)>1) x`);
   check('anomalies are not duplicated across imports', anomalyDupes === 0,
         anomalyDupes ? `${anomalyDupes} duplicated` : '');
   const [{ n: nullCountryDupes }] = await q(client,
