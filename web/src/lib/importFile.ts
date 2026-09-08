@@ -684,6 +684,26 @@ export function parseAmount(raw: string): number | null {
     negative = true;
     text = text.slice(1, -1);
   }
+
+  /**
+   * Scientific notation, recognised before the strip below.
+   *
+   * Excel stores a small number that way in the sheet XML: an exchange rate of
+   * 0.0763635527485667 is written "7.6363552748566696E-2". The strip removes
+   * every character that is not a digit, dot, comma or minus — which takes the
+   * E with it and leaves "7.6363552748566696-2" for Number() to reject. The
+   * value came back null, the row had no rate, and the database refused it.
+   *
+   * It only shows up on currencies worth a fraction of a dirham — TRY, JPY,
+   * KRW, VND — so it hid until a Turkish visa charge came through.
+   */
+  const scientific = /^[+-]?\d+(?:[.,]\d+)?[eE][+-]?\d+$/.exec(text.replace(/\s/g, ''));
+  if (scientific) {
+    const n = Number(scientific[0].replace(',', '.'));
+    if (!Number.isFinite(n)) return null;
+    return negative ? -Math.abs(n) : n;
+  }
+
   text = text.replace(/[^\d.,\-]/g, '');
   if (!text) return null;
   // 1.234,56 (European) vs 1,234.56 — decided by which separator comes last.
@@ -740,6 +760,16 @@ export interface ImportRow {
   warnings: string[];
   /** An existing transaction that looks like this one. */
   duplicateOf?: { id: string; date: string; amount: number; supplier: string };
+  /**
+   * An earlier row of THIS file that this one repeats exactly.
+   *
+   * Not a mistake. A statement listing the same hotel charge twice on the same
+   * day is a statement saying it happened twice, and this ledger is full of
+   * them. What it does mean is that the database's double-submit guard — which
+   * exists to stop a form clicked twice writing the charge twice — would
+   * otherwise mistake this for that and swallow the row.
+   */
+  repeatOfRow?: number;
 }
 
 /**
@@ -924,9 +954,12 @@ export function buildRows(
     if (!row.date || row.amountAed === null) continue;
     const key = `${row.date}|${row.amountAed.toFixed(2)}|${row.supplier.toLowerCase()}`;
     const prior = seen.get(key);
-    if (prior !== undefined)
-      row.warnings.push(`Identical to row ${prior} of this file.`);
-    else seen.set(key, row.sourceRow);
+    if (prior !== undefined) {
+      row.repeatOfRow = prior;
+      row.warnings.push(
+        `Identical to row ${prior} of this file — imported as a second charge, not merged.`,
+      );
+    } else seen.set(key, row.sourceRow);
   }
 
   return out;

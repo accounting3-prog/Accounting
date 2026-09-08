@@ -286,6 +286,16 @@ export function Import() {
     const batchId = await beginImportBatch(fileName ?? 'an uploaded file', rows.length);
 
     const results: Outcome[] = [];
+    /**
+     * Ids already returned by this run.
+     *
+     * create_transaction returns the id of an existing row rather than raising
+     * when it decides a submission is a repeat, so "success" and "a transaction
+     * was created" are not the same thing. An id seen twice means the second row
+     * wrote nothing, and the person needs telling.
+     */
+    const written = new Set<string>();
+
     for (let i = 0; i < included.length; i++) {
       const row = included[i];
       const result = await submitTransaction({
@@ -313,14 +323,35 @@ export function Import() {
         // A row with a warning is imported for review rather than silently
         // accepted, so the review queue picks it up.
         p_needs_review: row.warnings.length > 0,
-        // The duplicate check already ran here, and the reviewer said yes.
-        p_allow_duplicate: Boolean(row.duplicateOf),
+        // Two different reasons to bypass the database's two-minute
+        // double-submit guard, and both are deliberate.
+        //
+        // duplicateOf: this looks like a row already in the ledger, it was
+        // unticked by default, and the reviewer ticked it back on.
+        //
+        // repeatOfRow: the file itself lists this charge twice. The guard was
+        // built for a form clicked twice; a statement with 36 rows sent in
+        // seconds looks identical to it, so four genuine repeat charges were
+        // swallowed and REPORTED AS IMPORTED, leaving a balance 64,297.17 short
+        // with nothing to show why.
+        p_allow_duplicate: Boolean(row.duplicateOf || row.repeatOfRow),
       });
-      results.push(
-        result.ok
-          ? { row, ok: true, message: result.id }
-          : { row, ok: false, message: result.error },
-      );
+      if (result.ok && written.has(result.id)) {
+        results.push({
+          row,
+          ok: false,
+          message:
+            'The database treated this as a repeat of a row just written and saved nothing. ' +
+            'It is not in the balance.',
+        });
+      } else {
+        if (result.ok) written.add(result.id);
+        results.push(
+          result.ok
+            ? { row, ok: true, message: result.id }
+            : { row, ok: false, message: result.error },
+        );
+      }
       setProgress(i + 1);
 
       // A refusal about permission is not about this row, and every row after
