@@ -133,6 +133,7 @@ try {
   /* --------------------------------------------------- import them, in order */
 
   const seenIds = new Map();
+  const dropped = new Set();
   const outcomes = [];
   let n = 0;
   for (const row of ready) {
@@ -201,6 +202,89 @@ try {
     `the ledger lands on the balance the sheet computed`,
     Math.abs(Number(endBal) - EXPECTED) < 0.005,
     `ledger ${money(endBal)}, sheet ${money(EXPECTED)}, out by ${money(Number(endBal) - EXPECTED)}`,
+  );
+
+  /* ------------------------------------- 2. the same file, uploaded again */
+
+  console.log('\n  the same file a second time, against the ledger it just filled');
+  console.log('  ' + '-'.repeat(88));
+
+  const nowInLedger = async () =>
+    q(
+      client,
+      `select id, card_id as "cardId", to_char(txn_date,'YYYY-MM-DD') as txn_date,
+              supplier_raw as supplier, amount_aed::float8 as amount_aed, payment_ref, req_number
+         from transactions where card_id = $1 and status <> 'voided'`,
+      [card.id],
+    );
+
+  const second = buildRows(sheet, analysis.headerRow, analysis.mapping, {
+    dayFirst: analysis.dayFirst,
+    existing: await nowInLedger(),
+    cardId: card.id,
+  }).filter((r) => r.date || r.amountAed !== null);
+
+  check(
+    'not one row is offered a second time',
+    second.filter((r) => r.errors.length === 0 && r.include !== false).length === 0,
+    `${second.filter((r) => r.include !== false).length} would have been imported again`,
+  );
+  check(
+    'and every row says it is already there',
+    second.every((r) => r.duplicateOf),
+    `${second.filter((r) => !r.duplicateOf).length} did not`,
+  );
+
+  /* ------------- 3. the file against a ledger holding only one of each repeat */
+
+  console.log('\n  the file against a ledger missing the second copy of each repeat');
+  console.log('  ' + '-'.repeat(88));
+
+  // Exactly the situation this file left behind: the four charges the statement
+  // lists twice are in the ledger once. Nothing else is missing.
+  const repeats = second.filter((r) => r.repeatOfRow);
+  check('the file does contain repeated charges', repeats.length === 4, `${repeats.length}`);
+
+  const partial = (await nowInLedger()).filter((t) => {
+    const isSecondCopy = repeats.some(
+      (r) =>
+        r.date === t.txn_date &&
+        Math.abs(Math.abs(r.amountAed) - Math.abs(t.amount_aed)) < 0.005 &&
+        r.supplier.toLowerCase() === String(t.supplier ?? '').toLowerCase(),
+    );
+    if (!isSecondCopy) return true;
+    // Drop one of each pair, leaving the ledger one copy short.
+    const key = `${t.txn_date}|${Math.abs(t.amount_aed).toFixed(2)}`;
+    if (dropped.has(key)) return true;
+    dropped.add(key);
+    return false;
+  });
+
+  const third = buildRows(sheet, analysis.headerRow, analysis.mapping, {
+    dayFirst: analysis.dayFirst,
+    existing: partial,
+    cardId: card.id,
+  }).filter((r) => r.date || r.amountAed !== null);
+  const offered = third.filter((r) => r.errors.length === 0 && r.include !== false);
+
+  check(
+    'exactly the four missing copies are offered',
+    offered.length === 4,
+    offered.map((r) => `row ${r.sourceRow}`).join(', ') || 'none',
+  );
+  const net = offered.reduce(
+    (sum, r) => sum + (r.kind === 'purchase' || r.kind === 'fee' ? -r.amountAed : r.amountAed),
+    0,
+  );
+  check(
+    'and importing them closes the gap exactly',
+    Math.abs(net - -64197.54) < 0.005,
+    `${money(net)}`,
+  );
+  check(
+    'each one says why it is being offered',
+    offered.every((r) => r.warnings.some((w) => /ledger holds/.test(w))),
+    offered[0]?.warnings.join(' | ') ?? '',
   );
 
   await client.query('rollback');

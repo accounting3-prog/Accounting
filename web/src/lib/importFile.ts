@@ -807,14 +807,32 @@ export function buildRows(
 ): ImportRow[] {
   const out: ImportRow[] = [];
 
-  const existingKey = new Map<string, Transaction>();
+  /**
+   * Every matching row in the ledger, not just one of them.
+   *
+   * A Map keyed on date+amount+supplier held a single transaction per key, so
+   * three identical charges in the ledger looked exactly like one. That made
+   * "is this row already here?" the only question that could be asked, when the
+   * question that matters is "how many copies are already here?".
+   *
+   * The statement is the authority on how many times a charge happened. If it
+   * lists a hotel twice on one day and the ledger holds one, the second copy is
+   * missing and belongs in the import — which is precisely the case that lost
+   * 64,197.54 AED.
+   */
+  const existingCopies = new Map<string, Transaction[]>();
+  const ledgerKey = (t: Transaction) =>
+    `${t.txn_date}|${Math.abs(t.amount_aed).toFixed(2)}|${(t.supplier ?? t.description ?? '').toLowerCase().trim()}`;
   for (const t of options.existing ?? []) {
     if (options.cardId && t.cardId !== options.cardId) continue;
-    existingKey.set(
-      `${t.txn_date}|${Math.abs(t.amount_aed).toFixed(2)}|${(t.supplier ?? t.description ?? '').toLowerCase().trim()}`,
-      t,
-    );
+    const key = ledgerKey(t);
+    const list = existingCopies.get(key);
+    if (list) list.push(t);
+    else existingCopies.set(key, [t]);
   }
+
+  /** How many copies of each key this file has claimed so far. */
+  const claimed = new Map<string, number>();
 
   for (let r = headerRow + 1; r < sheet.rows.length; r++) {
     const row = sheet.rows[r] ?? [];
@@ -928,20 +946,37 @@ export function buildRows(
     };
 
     if (built.date && built.amountAed !== null) {
-      const hit = existingKey.get(
-        `${built.date}|${built.amountAed.toFixed(2)}|${supplier.toLowerCase().trim()}`,
-      );
-      if (hit) {
+      const key = `${built.date}|${built.amountAed.toFixed(2)}|${supplier.toLowerCase().trim()}`;
+      const inLedger = existingCopies.get(key) ?? [];
+      // Which copy of this charge the file is now on: 1 for the first, 2 for
+      // the second, and so on.
+      const copy = (claimed.get(key) ?? 0) + 1;
+      claimed.set(key, copy);
+
+      if (copy <= inLedger.length) {
+        // The ledger already holds this many. This one is a re-upload.
+        const hit = inLedger[copy - 1];
         built.duplicateOf = {
           id: hit.id,
           date: hit.txn_date ?? '',
           amount: hit.amount_aed,
           supplier: hit.supplier ?? hit.description ?? '',
         };
-        built.warnings.push('This looks like a transaction already in the ledger.');
+        built.warnings.push(
+          inLedger.length > 1
+            ? `The ledger already holds ${inLedger.length} of these, and this is copy ${copy}.`
+            : 'This looks like a transaction already in the ledger.',
+        );
         // Left out by default. Importing it is one click, if it really is a
-        // second identical charge on the same day.
+        // further identical charge on the same day.
         built.include = false;
+      } else if (inLedger.length > 0) {
+        // The file says this charge happened more times than the ledger holds.
+        // Ticked, because the missing copy is the whole reason to import.
+        built.warnings.push(
+          `The file lists this charge ${copy} time${copy === 1 ? '' : 's'} and the ledger holds ` +
+            `${inLedger.length}. This is the missing one.`,
+        );
       }
     }
 

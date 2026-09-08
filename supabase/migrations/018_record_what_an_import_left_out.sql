@@ -99,11 +99,33 @@ begin
         v_count := v_count + 1;
     end loop;
 
-    update import_batches
+    -- What it would take to undo this import.
+    --
+    -- The bulk workbook importer stores a pre-write snapshot here so the whole
+    -- thing can be put back. A browser import cannot work that way: it writes
+    -- one row at a time through create_transaction, and by the time this runs
+    -- the rows are committed. What reverses it is the list of what it created,
+    -- so that is what goes in — the ids, with the file and the row each came
+    -- from. Every one is also in transaction_corrections as a 'created' entry;
+    -- this collects them so a batch can be reversed without reconstructing it
+    -- from the history first.
+    update import_batches b
        set inserted_count = coalesce(p_inserted, 0),
            skipped_count  = v_count,
-           anomaly_count  = v_count
-     where id = p_batch_id;
+           anomaly_count  = v_count,
+           snapshot = jsonb_build_object(
+               'reversal', 'void every transaction listed in created_ids',
+               'created_ids', coalesce((
+                   select jsonb_agg(jsonb_build_object(
+                              'id', t.id,
+                              'amount_aed', t.amount_aed,
+                              'txn_date', t.txn_date,
+                              'source_row',
+                              substring(t.notes from 'row (\d+)')) order by t.created_at)
+                     from transactions t
+                    where t.notes like '%' || b.source || '%'
+                      and t.created_at >= b.created_at), '[]'::jsonb))
+     where b.id = p_batch_id;
 
     return v_count;
 end;
