@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Page } from '../components/Layout';
 import { TransactionDrawer } from '../components/TransactionDrawer';
+import { ResolveDialog, type ResolveRequest } from '../components/ResolveDialog';
 import { EditTransactionDialog } from '../components/EditTransactionDialog';
 import { useLedgerState } from '../components/LedgerProvider';
 import {
@@ -84,6 +85,8 @@ export function Transactions() {
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [visible, setVisible] = useState(PAGE_SIZE);
   const [selected, setSelected] = useState<Transaction | null>(null);
+  /** The row someone has asked to take out of the balance, or put back. */
+  const [resolving, setResolving] = useState<ResolveRequest | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [exported, setExported] = useState<string | null>(null);
   const [exportedAll, setExportedAll] = useState(false);
@@ -472,6 +475,28 @@ export function Transactions() {
           setSelected(null);
           setEditing(t);
         }}
+        onRemove={(t) => {
+          setSelected(null);
+          const c = cards.find((x) => x.id === t.cardId);
+          if (c)
+            setResolving({
+              transaction: t,
+              card: c,
+              action: 'void',
+              label: 'Remove from the balance',
+            });
+        }}
+        onRestore={(t) => {
+          setSelected(null);
+          const c = cards.find((x) => x.id === t.cardId);
+          if (c)
+            setResolving({
+              transaction: t,
+              card: c,
+              action: 'confirm',
+              label: 'Put this back in the balance',
+            });
+        }}
       />
 
       <EditTransactionDialog
@@ -480,6 +505,16 @@ export function Transactions() {
         onClose={() => setEditing(null)}
         onDone={reload}
       />
+
+      <ResolveDialog
+        request={resolving}
+        onClose={() => setResolving(null)}
+        onDone={() => {
+          setResolving(null);
+          reload();
+        }}
+      />
+
     </Page>
   );
 }

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Page } from '../components/Layout';
 import { TransactionDrawer } from '../components/TransactionDrawer';
+import { ResolveDialog, type ResolveRequest } from '../components/ResolveDialog';
 import { EditTransactionDialog } from '../components/EditTransactionDialog';
 import { useLedgerState } from '../components/LedgerProvider';
 import { matchesQuery, searchHaystack } from '../lib/search';
@@ -129,6 +130,8 @@ export function CardDetail() {
   const { id } = useParams<{ id: string }>();
   const card = getCard(id ?? '');
   const [selected, setSelected] = useState<Transaction | null>(null);
+  /** The row someone has asked to take out of the balance, or put back. */
+  const [resolving, setResolving] = useState<ResolveRequest | null>(null);
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [query, setQuery] = useState('');
   const [showAll, setShowAll] = useState(false);
@@ -521,6 +524,26 @@ export function CardDetail() {
           setSelected(null);
           setEditing(t);
         }}
+        onRemove={(t) => {
+          setSelected(null);
+          if (card)
+            setResolving({
+              transaction: t,
+              card,
+              action: 'void',
+              label: 'Remove from the balance',
+            });
+        }}
+        onRestore={(t) => {
+          setSelected(null);
+          if (card)
+            setResolving({
+              transaction: t,
+              card,
+              action: 'confirm',
+              label: 'Put this back in the balance',
+            });
+        }}
       />
 
       <EditTransactionDialog
@@ -529,6 +552,16 @@ export function CardDetail() {
         onClose={() => setEditing(null)}
         onDone={reload}
       />
+
+      <ResolveDialog
+        request={resolving}
+        onClose={() => setResolving(null)}
+        onDone={() => {
+          setResolving(null);
+          reload();
+        }}
+      />
+
     </Page>
   );
 }

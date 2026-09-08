@@ -809,6 +809,78 @@ try {
       return client.query(`select begin_import_batch('sneaky.xlsx', 1)`);
     }));
 
+  /* ================================ 3g. removing a duplicate, and putting it back */
+
+  console.log('\n\n3g. TAKING A DUPLICATE OUT OF THE BALANCE');
+  console.log('-'.repeat(94));
+
+  await scenario(async () => {
+    // "Suppose it really is a duplicate — I want to remove it." The answer is
+    // void, not delete, and the difference is the whole point: a deleted row
+    // leaves a balance that changed with nothing to explain it.
+    const card = cards[0];
+    const start = await balance(card.id);
+
+    const first = await addTxn(card.id, {
+      kind: 'purchase', amount: 1450, date: '2026-09-02',
+      supplier: 'DOUBLE CHARGED HOTEL', paymentRef: 'DUP-1',
+    });
+    const second = await addTxn(card.id, {
+      kind: 'purchase', amount: 1450, date: '2026-09-02',
+      supplier: 'DOUBLE CHARGED HOTEL', paymentRef: 'DUP-1', allowDuplicate: true,
+    });
+    check('two identical charges both exist', first !== second);
+    const both = await balance(card.id);
+    check('and both are in the balance',
+          near(both, start + card.sign * -2900), `${money(start)} -> ${money(both)}`);
+
+    await client.query(
+      `select resolve_review_item($1, 'void', $2)`,
+      [second, 'Duplicate: the same charge was entered twice from one file.'],
+    );
+
+    const after = await balance(card.id);
+    check('voiding one takes exactly its amount out',
+          near(after, start + card.sign * -1450), `${money(both)} -> ${money(after)}`);
+
+    // Not a delete. The row, its reason, and who decided all survive.
+    const [row] = await q(client,
+      `select status, review_reason, amount_aed::numeric a from transactions where id = $1`, [second]);
+    check('the row is still there', Boolean(row));
+    check('marked voided rather than removed', row.status === 'voided', row.status);
+    check('its amount is untouched', near(row.a, -1450), String(row.a));
+    check('and it is still searchable',
+          (await q(client, `select count(*)::int n from transactions_searchable where id = $1`,
+                   [second]))[0].n === 1);
+
+    const [trail] = await q(client,
+      `select action, from_status, to_status, rationale, actor from activity_log
+        where transaction_id = $1 and action = 'status_changed' order by created_at desc limit 1`,
+      [second]);
+    check('the decision is in the history with its reason',
+          trail?.to_status === 'voided' && /duplicate/i.test(trail?.rationale ?? ''),
+          `${trail?.from_status} -> ${trail?.to_status} by ${trail?.actor}`);
+
+    // And it can be undone, because a void is a judgement and judgements are
+    // sometimes wrong.
+    await client.query(
+      `select resolve_review_item($1, 'confirm', $2)`,
+      [second, 'Checked the statement: the hotel really did charge twice.'],
+    );
+    check('putting it back restores the balance exactly',
+          near(await balance(card.id), both), `${money(await balance(card.id))}`);
+  });
+
+  await scenario(async () => {
+    const card = cards[0];
+    const id = await addTxn(card.id, {
+      kind: 'purchase', amount: 55, date: '2026-09-02',
+      supplier: 'VOID WITHOUT A REASON', paymentRef: 'VW-1',
+    });
+    await expectRefused('taking a row out of the balance without saying why', () =>
+      client.query(`select resolve_review_item($1, 'void', '   ')`, [id]));
+  });
+
   /* ================================================== 4. what must be refused */
 
   console.log('\n\n4. WHAT THE SYSTEM MUST REFUSE');

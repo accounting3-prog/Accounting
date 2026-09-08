@@ -122,6 +122,12 @@ export function ResolveDialog({
               <Notice tone="negative" title="This removes the amount from the live balance">
                 The row is kept with its full history and stays searchable — it is
                 marked voided, never deleted.
+                <p className="mt-1.5">
+                  That distinction is the point. A duplicate that is deleted leaves a
+                  balance that quietly changed and nothing to explain it; a duplicate
+                  that is voided leaves the reason, who decided, and when. If it turns
+                  out to have been a real charge after all, it can be put back.
+                </p>
               </Notice>
             </div>
           )}

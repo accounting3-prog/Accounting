@@ -39,12 +39,18 @@ export function TransactionDrawer({
   card,
   onClose,
   onEdit,
+  onRemove,
+  onRestore,
   canEdit = false,
 }: {
   transaction: Transaction | null;
   card: Card | undefined;
   onClose: () => void;
   onEdit?: (t: Transaction) => void;
+  /** Take this row out of the balance. Never a delete — see the dialog. */
+  onRemove?: (t: Transaction) => void;
+  /** Put a voided row back. */
+  onRestore?: (t: Transaction) => void;
   canEdit?: boolean;
 }) {
   useEffect(() => {
@@ -82,13 +88,40 @@ export function TransactionDrawer({
             </div>
           </div>
           <div className="flex shrink-0 gap-1.5">
-            {canEdit && onEdit && t.entry_type === 'source_transaction' && (
+            {canEdit && onEdit && t.entry_type === 'source_transaction' && t.status !== 'voided' && (
               <button
                 type="button"
                 onClick={() => onEdit(t)}
                 className="rounded-sm border border-line-strong px-2 py-1 text-xs font-medium text-ink hover:bg-sunken"
               >
                 Edit
+              </button>
+            )}
+            {/*
+              The answer to "this one is a duplicate, take it off".
+
+              It was only reachable from the review queue, which is where rows
+              the importer doubted end up — not where someone notices a
+              duplicate while reading the ledger. The wording says what it does
+              rather than what it is called: nobody looking to remove a row
+              searches for the word "resolve".
+            */}
+            {canEdit && onRemove && t.status !== 'voided' && (
+              <button
+                type="button"
+                onClick={() => onRemove(t)}
+                className="rounded-sm border border-[#eecac6] px-2 py-1 text-xs font-medium text-negative hover:bg-negative-soft"
+              >
+                Remove from the balance
+              </button>
+            )}
+            {canEdit && onRestore && t.status === 'voided' && (
+              <button
+                type="button"
+                onClick={() => onRestore(t)}
+                className="rounded-sm border border-line-strong px-2 py-1 text-xs font-medium text-ink hover:bg-sunken"
+              >
+                Put it back
               </button>
             )}
             <button
