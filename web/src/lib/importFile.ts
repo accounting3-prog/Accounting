@@ -1001,6 +1001,41 @@ export function buildRows(
         // Left out by default. Importing it is one click, if it really is a
         // further identical charge on the same day.
         built.include = false;
+      } else if (inLedger.length === 0) {
+        /**
+         * The same charge with the day and month the other way round.
+         *
+         * Two sheets in this workbook hold dates Excel read as month/day, and
+         * the extraction repaired them against evidence in the file. An import
+         * has no such evidence and reads what the cell says, so a row the
+         * ledger holds as 9 January arrives as 1 September, matches nothing,
+         * and looks new. Re-uploading the RAK 9825 statement would have added
+         * seven duplicates that way, each with a date three seasons out.
+         *
+         * Not corrected here — guessing at a date is how this ledger got its
+         * hardest bug. Flagged, with both readings shown, so the person holding
+         * the statement decides.
+         */
+        const [y, mo, dy] = (built.date ?? '').split('-');
+        const swapped = dy && mo ? `${y}-${dy.padStart(2, '0')}-${mo.padStart(2, '0')}` : null;
+        const alsoOnSwapped = swapped
+          ? (existingCopies.get(
+              `${swapped}|${built.amountAed.toFixed(2)}|${supplierKey(supplier)}`,
+            ) ?? [])
+          : [];
+        if (alsoOnSwapped.length && swapped !== built.date) {
+          built.duplicateOf = {
+            id: alsoOnSwapped[0].id,
+            date: alsoOnSwapped[0].txn_date ?? '',
+            amount: alsoOnSwapped[0].amount_aed,
+            supplier: alsoOnSwapped[0].supplier ?? alsoOnSwapped[0].description ?? '',
+          };
+          built.warnings.push(
+            `The ledger holds this same charge on ${swapped} — the same date with the day and ` +
+              `month swapped. Check which reading is right before importing it again.`,
+          );
+          built.include = false;
+        }
       } else if (inLedger.length > 0) {
         // The file says this charge happened more times than the ledger holds.
         // Ticked, because the missing copy is the whole reason to import.
