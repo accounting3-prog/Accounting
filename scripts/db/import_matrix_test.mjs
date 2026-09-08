@@ -313,6 +313,24 @@ const scenarios = [
    * -------------------------------------------------------------------------
    */
   {
+    name: 'a supplier whose name ends in a country code, already in the ledger',
+    // The exact shape that let one file import six times. The sheet writes
+    // "Emaar Misr 818"; the ledger splits the 818 off and returns "Emaar Misr".
+    // Keyed as they stand the two never match and every row looks new.
+    preload: [
+      { date: '25/09/2026', supplier: 'Emaar Misr 818', spend: 23403.76 },
+      { date: '25/09/2026', supplier: 'CCA*VASCO TOURISM LLC 784', spend: 1078 },
+    ],
+    lines: [
+      { date: '25/09/2026', supplier: 'Emaar Misr 818', spend: 23403.76 },
+      { date: '25/09/2026', supplier: 'CCA*VASCO TOURISM LLC 784', spend: 1078 },
+      { date: '25/09/2026', supplier: 'Millennium Airport Hot 784', spend: 3690 },
+    ],
+    expectRows: 3,
+    expectReady: 1,
+    expect: -3690,
+  },
+  {
     name: 'a second copy arrives after the first is already in the ledger',
     // The case that lost 64,197.54 AED. The ledger holds one of a charge the
     // statement lists twice, so the second copy is the missing one and must
@@ -407,7 +425,7 @@ const scenarios = [
     ],
     expectRows: 2,
     expect: -370 - 367.25,
-    expectWarning: /not one of the known currencies/i,
+    expectWarning: /is not one of the \d+ known currencies/i,
   },
   {
     name: 'an amount in BOTH columns at once',
@@ -501,10 +519,14 @@ try {
       const bytes = buildFile(card, s.lines);
       const sheet = parseXlsx(bytes)[0];
       const analysis = analyseSheet(sheet, card);
+      // Shaped exactly as api.ts shapes it, country code split off the name.
+      // Handing over supplier_raw instead would hide the very mismatch that let
+      // one file import six times.
       const existing = await q(
         client,
         `select id, card_id as "cardId", to_char(txn_date,'YYYY-MM-DD') as txn_date,
-                supplier_raw as supplier, amount_aed::float8 as amount_aed,
+                regexp_replace(supplier_raw, '\\s\\d{3}\\s*$', '') as supplier,
+                supplier_raw, amount_aed::float8 as amount_aed,
                 payment_ref, req_number
            from transactions where card_id = $1 and status <> 'voided'`,
         [card.id],
@@ -620,7 +642,8 @@ try {
         existing: await q(
           client,
           `select id, card_id as "cardId", to_char(txn_date,'YYYY-MM-DD') as txn_date,
-                  supplier_raw as supplier, amount_aed::float8 as amount_aed,
+                  regexp_replace(supplier_raw, '\\s\\d{3}\\s*$', '') as supplier,
+                  supplier_raw, amount_aed::float8 as amount_aed,
                   payment_ref, req_number
              from transactions where card_id = $1 and status <> 'voided'`,
           [card.id],

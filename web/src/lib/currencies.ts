@@ -1,15 +1,30 @@
 /**
- * The currencies this ledger accepts: the 28 the audited workbook contained,
- * plus any added deliberately since.
+ * The currencies this ledger accepts.
  *
- * This is a closed set, mirroring the `currencies` table. A code outside it is
- * shown as unrecognised rather than mapped to a best guess — a wrong currency
- * in a financial report is worse than a blank one. The cost of that rule is
- * that a new currency must be added in both places, and the test below refuses
- * to let the two drift apart.
+ * The list lives in the database and is loaded with the ledger. It used to be
+ * written out here as well, which meant every new currency needed a code change
+ * and a deploy, and meant two lists that could disagree — the dangerous
+ * direction being a code the database knows and this file does not, because the
+ * importer then calls it unrecognised, drops it, and carries the original
+ * amount off into a note while the AED settles correctly. Quietly wrong.
+ *
+ * It is still a CLOSED set, and that is the point. A code outside it is reported
+ * as unrecognised rather than mapped to a best guess. Accepting whatever is
+ * typed sounds friendlier until GPB is entered once beside GBP's hundred-odd
+ * rows: two currencies in the report, both looking equally real, nothing
+ * flagged. The set is now all of ISO 4217, so a genuine currency is always
+ * known and a typo still is not.
+ *
+ * The values below are the fallback for a session with no database — the sample
+ * a signed-out visitor sees. They are the 28 the audited workbook contained.
  */
 
-export const CURRENCIES = {
+interface CurrencyInfo {
+  name: string;
+  minor: number;
+}
+
+const FALLBACK: Record<string, CurrencyInfo> = {
   AED: { name: 'UAE Dirham', minor: 2 },
   USD: { name: 'US Dollar', minor: 2 },
   EUR: { name: 'Euro', minor: 2 },
@@ -38,24 +53,51 @@ export const CURRENCIES = {
   MUR: { name: 'Mauritian Rupee', minor: 2 },
   CAD: { name: 'Canadian Dollar', minor: 2 },
   NZD: { name: 'New Zealand Dollar', minor: 2 },
-  // Not in the workbook; added deliberately when it was first needed. Three
-  // minor units per ISO 4217 — the dinar divides into 1,000 fils, like the
-  // Kuwaiti, Bahraini, Omani and Jordanian dinars above.
-  IQD: { name: 'Iraqi Dinar', minor: 3 },
-} as const;
+};
 
-export type Currency = keyof typeof CURRENCIES;
+/** Replaced when the ledger loads; the fallback until then. */
+let live: Record<string, CurrencyInfo> = { ...FALLBACK };
 
-export const CURRENCY_CODES = Object.keys(CURRENCIES) as Currency[];
+/**
+ * Takes the list from the database.
+ *
+ * Refuses an empty or unreadable list rather than replacing a working set with
+ * nothing — a failed fetch must not turn every currency in the app into an
+ * unrecognised one.
+ */
+export function setCurrencies(
+  rows: { code: string; name: string; minor_units: number }[] | null | undefined,
+): void {
+  if (!rows?.length) return;
+  const next: Record<string, CurrencyInfo> = {};
+  for (const r of rows) {
+    const code = String(r.code ?? '').trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(code)) continue;
+    next[code] = { name: String(r.name ?? code), minor: Number(r.minor_units ?? 2) };
+  }
+  if (Object.keys(next).length) live = next;
+}
 
-export function isKnownCurrency(code: string | undefined | null): code is Currency {
-  return !!code && code in CURRENCIES;
+/** Everything currently accepted, in alphabetical order. */
+export function currencyCodes(): string[] {
+  return Object.keys(live).sort();
+}
+
+/** How many currencies are known — for telling someone why a code was refused. */
+export function currencyCount(): number {
+  return Object.keys(live).length;
+}
+
+export function isKnownCurrency(code: string | undefined | null): boolean {
+  return !!code && code.toUpperCase() in live;
 }
 
 export function currencyName(code: string | undefined | null): string {
-  return isKnownCurrency(code) ? CURRENCIES[code].name : 'Unrecognised';
+  if (!code) return '';
+  return live[code.toUpperCase()]?.name ?? code;
 }
 
-export function minorUnits(code: string | undefined | null): number {
-  return isKnownCurrency(code) ? CURRENCIES[code].minor : 2;
+export function currencyMinorUnits(code: string | undefined | null): number {
+  if (!code) return 2;
+  return live[code.toUpperCase()]?.minor ?? 2;
 }

@@ -13,7 +13,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { updateTransaction } from '../lib/api';
-import { CURRENCY_CODES } from '../lib/currencies';
+import { currencyCodes } from '../lib/currencies';
 import { formatDate } from '../lib/format';
 import { projectBalance } from '../lib/ledger';
 import type { Card, Transaction, TxnKind } from '../lib/types';
@@ -171,7 +171,7 @@ export function EditTransactionDialog({
             <Field label="Original currency">
               <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={fieldClass}>
                 <option value="">None — charged in AED</option>
-                {CURRENCY_CODES.filter((c) => c !== 'AED').map((c) => (
+                {currencyCodes().filter((c) => c !== 'AED').map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>

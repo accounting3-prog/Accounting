@@ -298,36 +298,44 @@ try {
   check('no AED transaction carries a conversion rate', aedWithRate, 0);
 
   /**
-   * The currency list exists twice — in the database and in the app — and a
-   * closed set held in two places is a set that drifts.
+   * The currency list lives in the database now, and the app loads it. What is
+   * left in the app is a fallback for a session with no database — the sample a
+   * signed-out visitor sees — and the risk has changed shape with it.
    *
-   * The consequence is asymmetric and worth naming. A code the app knows and
-   * the database does not means every row carrying it is refused at import,
-   * loudly. A code the database knows and the app does not means the importer
-   * calls it unrecognised, drops it, and carries the original amount away in a
-   * note — quietly, and the conversion is lost.
+   * The fallback must be a SUBSET of the table. A code the fallback offers and
+   * the database refuses would let someone pick a currency in sample mode that
+   * cannot be saved. The other direction is fine and expected: the table holds
+   * every ISO code, and the fallback holds the handful the workbook used.
    */
   const dbCurrencies = (await q(client, 'select code, name, minor_units from currencies'))
     .reduce((m, r) => m.set(r.code, r), new Map());
   const appSource = await readFile('web/src/lib/currencies.ts', 'utf8');
-  const appCurrencies = new Map(
+  const fallback = new Map(
     [...appSource.matchAll(/^\s*([A-Z]{3}):\s*\{\s*name:\s*'([^']+)',\s*minor:\s*(\d)/gm)]
       .map((m) => [m[1], { name: m[2], minor_units: Number(m[3]) }]),
   );
 
-  check('the app knows every currency the database does',
-        [...dbCurrencies.keys()].filter((c) => !appCurrencies.has(c)).join(', '), '');
-  check('and the database knows every currency the app does',
-        [...appCurrencies.keys()].filter((c) => !dbCurrencies.has(c)).join(', '), '');
-  const disagree = [...appCurrencies.entries()]
+  check("the app's offline fallback offers nothing the database would refuse",
+        [...fallback.keys()].filter((c) => !dbCurrencies.has(c)).join(', '), '');
+  const disagree = [...fallback.entries()]
     .filter(([code, a]) => {
       const d = dbCurrencies.get(code);
-      return d && (d.name !== a.name || Number(d.minor_units) !== a.minor_units);
+      return d && Number(d.minor_units) !== a.minor_units;
     })
-    .map(([code, a]) => `${code}: app ${a.name}/${a.minor_units}, db ${dbCurrencies.get(code).name}/${dbCurrencies.get(code).minor_units}`);
-  check('and they agree on the name and the subdivision of each',
-        disagree.join('; '), '');
-  console.log(`      ${dbCurrencies.size} currencies, the same list on both sides`);
+    .map(([code, a]) => `${code}: fallback ${a.minor_units}, db ${dbCurrencies.get(code).minor_units}`);
+  check('and agrees with it on how each one subdivides', disagree.join('; '), '');
+
+  // Every currency a transaction actually carries must be in the table, or the
+  // foreign key is the only thing standing between the ledger and a code
+  // nothing can name.
+  const usedRows = await q(
+    client,
+    'select distinct currency from transactions where currency is not null',
+  );
+  check('every currency in use is one the table knows',
+        usedRows.map((r) => r.currency).filter((c) => !dbCurrencies.has(c)).join(', '), '');
+  console.log(`      ${dbCurrencies.size} currencies in the table, ` +
+              `${usedRows.length} in use, ${fallback.size} in the offline fallback`);
 
   const [{ n: dupKeys }] = await q(
     client,
@@ -367,9 +375,14 @@ try {
         badlyNumbered.slice(0, 3)
           .map((g) => `${g.supplier} x${g.copies} highest ${g.highest}`).join('; '));
 
+  // Voided rows are excluded on both sides or neither. The group query above
+  // already drops them, and counting them here made the two disagree by exactly
+  // the eight duplicates that had just been voided.
   const [{ n: repeats }] = await q(
     client,
-    'select count(*)::int n from transactions where occurrence > 1',
+    `select count(*)::int n from transactions
+      where occurrence > 1 and status <> 'voided'
+        and entry_type = 'source_transaction'`,
   );
   const extraCopies = repeatGroups.reduce((a, g) => a + (g.copies - 1), 0);
   check('and the count of them agrees with the groups they came from',

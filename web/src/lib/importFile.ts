@@ -29,7 +29,7 @@
  */
 
 import { unzipSync, strFromU8 } from 'fflate';
-import { CURRENCIES } from './currencies';
+import { currencyCount, isKnownCurrency } from './currencies';
 import type { Card, Transaction } from './types';
 
 /* ------------------------------------------------------------ reading cells */
@@ -788,6 +788,34 @@ function moneyInKind(supplier: string, notes: string): RowKind {
   return REFUND_RE.test(`${supplier} ${notes}`) ? 'refund' : 'funding';
 }
 
+/**
+ * One spelling of a supplier, for deciding whether two rows are the same charge.
+ *
+ * The two sides disagreed, and every duplicate check that mattered went blind
+ * because of it. A spreadsheet cell reads "Emaar Misr 818" — the trailing three
+ * digits are the country code, and the ledger splits them off, so the same
+ * transaction comes back from the database as "Emaar Misr". Keyed as they
+ * stand, "emaar misr 818" never equals "emaar misr" and the row looked new
+ * every time.
+ *
+ * It only showed on suppliers that carry a country code. AMEX 4000's statement
+ * mostly does not — THE CHANCERY ROSEWOOD, VALLJET, ACCOR* SOFITEL — so the
+ * check appeared to work there while being useless on MASTERCARD 6404, where
+ * almost every name ends in 818, 784 or 840. One file went in six times.
+ *
+ * So both sides come through here: trailing country code removed, punctuation
+ * and spacing flattened, case dropped. The comparison is deliberately loose —
+ * it decides what to WARN about, never what to merge, so being slightly too
+ * eager costs a reviewer one glance and being too strict costs money.
+ */
+export function supplierKey(name: string | undefined | null): string {
+  return String(name ?? '')
+    .replace(/\s+\d{3}\s*$/, '')   // the country code the ledger splits off
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 export interface BuildOptions {
   dayFirst: boolean;
   /** Rows already in the ledger, used to spot a re-upload. */
@@ -822,7 +850,9 @@ export function buildRows(
    */
   const existingCopies = new Map<string, Transaction[]>();
   const ledgerKey = (t: Transaction) =>
-    `${t.txn_date}|${Math.abs(t.amount_aed).toFixed(2)}|${(t.supplier ?? t.description ?? '').toLowerCase().trim()}`;
+    `${t.txn_date}|${Math.abs(t.amount_aed).toFixed(2)}|${supplierKey(
+      t.supplier_raw ?? t.supplier ?? t.description,
+    )}`;
   for (const t of options.existing ?? []) {
     if (options.cardId && t.cardId !== options.cardId) continue;
     const key = ledgerKey(t);
@@ -899,15 +929,16 @@ export function buildRows(
     const rate = parseAmount(cell(row, mapping.rate));
 
     let carriedNote = '';
-    if (currency && !(currency in CURRENCIES)) {
+    if (currency && !isKnownCurrency(currency)) {
       // The code is dropped rather than mapped to a near match, and the figure
       // that went with it has to go too: an original amount with no currency is
       // a number that means nothing, and the database rightly refuses one. The
       // cell is kept verbatim in the row's notes so the information reaches the
       // reviewer instead of disappearing.
       warnings.push(
-        `"${currency}" is not one of the known currencies. The AED amount is imported and flagged` +
-          ` for review; the original figure is kept in the notes rather than converted.`,
+        `"${currency}" is not one of the ${currencyCount()} known currencies — every code in` +
+          ` ISO 4217 is accepted, so this is most likely a typo. The AED amount is imported and` +
+          ` flagged for review; the original figure is kept in the notes rather than converted.`,
       );
       carriedNote = `original currency cell: "${currencyCell.raw}"`;
       currency = null;
@@ -946,7 +977,7 @@ export function buildRows(
     };
 
     if (built.date && built.amountAed !== null) {
-      const key = `${built.date}|${built.amountAed.toFixed(2)}|${supplier.toLowerCase().trim()}`;
+      const key = `${built.date}|${built.amountAed.toFixed(2)}|${supplierKey(supplier)}`;
       const inLedger = existingCopies.get(key) ?? [];
       // Which copy of this charge the file is now on: 1 for the first, 2 for
       // the second, and so on.
@@ -987,7 +1018,7 @@ export function buildRows(
   const seen = new Map<string, number>();
   for (const row of out) {
     if (!row.date || row.amountAed === null) continue;
-    const key = `${row.date}|${row.amountAed.toFixed(2)}|${row.supplier.toLowerCase()}`;
+    const key = `${row.date}|${row.amountAed.toFixed(2)}|${supplierKey(row.supplier)}`;
     const prior = seen.get(key);
     if (prior !== undefined) {
       row.repeatOfRow = prior;

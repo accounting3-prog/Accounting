@@ -26,7 +26,7 @@ import {
   fieldClass,
 } from '../components/ui';
 import { formatDate, formatRate, todayISO } from '../lib/format';
-import { CURRENCY_CODES } from '../lib/currencies';
+import { currencyCodes } from '../lib/currencies';
 import {
   TXN_KIND_LABEL,
   directionForKind,
@@ -337,7 +337,7 @@ export function AddTransaction() {
                   className={fieldClass}
                 >
                   <option value="">None — charged in AED</option>
-                  {CURRENCY_CODES.filter((c) => c !== 'AED').map((c) => (
+                  {currencyCodes().filter((c) => c !== 'AED').map((c) => (
                     <option key={c} value={c}>
                       {c}
                     </option>

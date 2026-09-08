@@ -25,7 +25,7 @@ import {
   fieldClass,
 } from '../components/ui';
 import { createCard } from '../lib/api';
-import { CURRENCY_CODES } from '../lib/currencies';
+import { currencyCodes } from '../lib/currencies';
 import { formatDate, todayISO } from '../lib/format';
 import { getCards } from '../lib/ledger';
 
@@ -197,7 +197,7 @@ export function AddCard() {
                   onChange={(e) => set('settlementCurrency', e.target.value)}
                   className={fieldClass}
                 >
-                  {CURRENCY_CODES.map((c) => (
+                  {currencyCodes().map((c) => (
                     <option key={c} value={c}>
                       {c}
                     </option>

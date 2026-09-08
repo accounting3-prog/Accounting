@@ -16,7 +16,14 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { getMyAccess, loadLedger, type LedgerSource, type LoadFailure, type MyAccess } from '../lib/api';
+import {
+  getMyAccess,
+  loadCurrencies,
+  loadLedger,
+  type LedgerSource,
+  type LoadFailure,
+  type MyAccess,
+} from '../lib/api';
 import { setLedgerData } from '../lib/ledger';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { AuthChecking, SignInScreen, SignedOutBanner, useAuth } from './AuthGate';
@@ -79,6 +86,10 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
   const load = useCallback(async (signedIn: boolean, quiet = false) => {
     if (!quiet) setStatus('loading');
     setFailure(undefined);
+    // Before the ledger, so nothing renders a currency the app has not yet
+    // heard of and calls it unrecognised.
+    if (signedIn) await loadCurrencies();
+
     const result = await loadLedger({ signedIn });
     // Asked alongside the ledger rather than on each page, so a screen never
     // renders before it knows whether to offer an action it cannot perform.

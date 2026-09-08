@@ -12,6 +12,7 @@
  */
 
 import { supabase, isSupabaseConfigured } from './supabase';
+import { setCurrencies } from './currencies';
 import type { Card, CurrencySpend, LedgerData, Transaction } from './types';
 
 export type LedgerSource = 'supabase' | 'sample';
@@ -729,4 +730,23 @@ export async function listImportHistory(): Promise<
     .limit(100);
   if (error) return { ok: false, error: error.message };
   return { ok: true, rows: (data ?? []) as ImportHistoryRow[] };
+}
+
+
+/**
+ * The currency list, from the database.
+ *
+ * Loaded with the ledger rather than written into the app, so adding a currency
+ * never needs a deploy and the two lists cannot disagree. A failure here leaves
+ * the built-in fallback in place; setCurrencies refuses an empty list.
+ */
+export async function loadCurrencies(): Promise<number> {
+  if (!supabase) return 0;
+  const { data, error } = await supabase
+    .from('currencies')
+    .select('code, name, minor_units')
+    .order('code');
+  if (error || !data) return 0;
+  setCurrencies(data as { code: string; name: string; minor_units: number }[]);
+  return data.length;
 }

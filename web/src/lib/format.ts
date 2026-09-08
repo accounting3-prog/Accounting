@@ -7,8 +7,7 @@
  * deliberately no helper that totals a mixed-currency list.
  */
 
-import type { Currency } from './currencies';
-import { minorUnits } from './currencies';
+import { currencyMinorUnits } from './currencies';
 
 /** AED, the settlement currency every card balance is denominated in. */
 export const BASE_CURRENCY = 'AED';
@@ -19,7 +18,7 @@ export function formatMoney(
   opts: { signed?: boolean; withCode?: boolean } = {},
 ): string {
   if (amount === null || amount === undefined || Number.isNaN(amount)) return '—';
-  const digits = minorUnits(currency as Currency);
+  const digits = currencyMinorUnits(currency);
   const abs = Math.abs(amount).toLocaleString('en-US', {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
