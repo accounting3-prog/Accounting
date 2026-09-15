@@ -16,7 +16,10 @@ import {
 } from '../components/ui';
 import { formatCount, formatDateShort, formatRate } from '../lib/format';
 import { exportCsv, exportFilename, exportXlsx, exportXlsxByCard } from '../lib/export';
-import { getCards, getTransactions } from '../lib/ledger';
+import { getCards, getTransactions,
+  totalsFor,
+  type ResultTotals,
+} from '../lib/ledger';
 import {
   EMPTY_FILTERS,
   applyFilters,
@@ -106,6 +109,10 @@ export function Transactions() {
   }, [all, cards, filters, sortKey, sortDir]);
 
   const shown = results.slice(0, visible);
+
+  /** What the rows on screen add up to. Recomputed as the filters change. */
+
+  const totals = useMemo(() => totalsFor(results), [results]);
 
   const update = (patch: Partial<Filters>) => {
     setFilters((f) => ({ ...f, ...patch }));
@@ -211,6 +218,19 @@ export function Transactions() {
           )}
         </p>
       )}
+
+      {/* The answer to "what did this cost us in the end", which is a net
+
+           figure. Shown whenever the view is narrowed, because a total over
+
+           the whole ledger is a number nobody asked for. */}
+
+      {isFiltered(filters) && results.length > 0 && (
+
+        <ResultTotal totals={totals} />
+
+      )}
+
 
       {showFilters && (
         <div className="mb-4 rounded-md border border-line bg-surface px-4 py-3.5">
@@ -516,5 +536,122 @@ export function Transactions() {
       />
 
     </Page>
+  );
+}
+
+/**
+ * What the rows on screen come to.
+ *
+ * Three rules shape it.
+ *
+ * The headline is NET — spending less what came back. Asked "how much did
+ * REQ 11973 cost", nobody means the gross: a 5,000 booking refunded in full
+ * cost nothing, and a total that says 5,000 is answering a question that was
+ * not asked.
+ *
+ * The two halves are shown beside it, so the net is never a figure you have to
+ * trust. Anyone can see it is 12,400 out and 3,000 back.
+ *
+ * Original amounts are listed per currency and never added up. 100 EUR and
+ * 100 JPY are not 200 of anything. The AED figures can be totalled because
+ * every card settles in AED; these cannot, so they stay apart.
+ */
+function ResultTotal({ totals }: { totals: ResultTotals }) {
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copy = async (value: number, label: string) => {
+    // Plain digits, no grouping and no currency word: this is going into a
+    // spreadsheet cell or a message, and "12,400.00 AED" pasted into Excel is
+    // text rather than a number.
+    const text = value.toFixed(2);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+      window.setTimeout(() => setCopied(null), 1800);
+    } catch {
+      setCopied('nocopy');
+      window.setTimeout(() => setCopied(null), 2500);
+    }
+  };
+
+  const Figure = ({
+    label,
+    value,
+    tone,
+    strong,
+  }: {
+    label: string;
+    value: number;
+    tone?: 'ledger' | 'plain' | 'muted';
+    strong?: boolean;
+  }) => (
+    <button
+      type="button"
+      onClick={() => void copy(value, label)}
+      title="Click to copy this figure"
+      className={`group flex flex-col items-start rounded-sm px-2.5 py-1.5 text-left transition-colors hover:bg-sunken ${
+        strong ? 'bg-sunken' : ''
+      }`}
+    >
+      <span className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+        {label}
+        <span className="ml-1 opacity-0 transition-opacity group-hover:opacity-100">copy</span>
+      </span>
+      <span className={`tnum ${strong ? 'text-lg font-semibold' : 'text-[15px]'}`}>
+        <Money amount={value} tone={tone} code={false} />
+        <span className="ml-1 text-xs font-normal text-ink-faint">AED</span>
+      </span>
+      {copied === label && (
+        <span className="text-[11px] text-positive">copied</span>
+      )}
+    </button>
+  );
+
+  return (
+    <div className="mb-4 rounded-md border border-line bg-surface px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Figure label="Net cost" value={totals.net} tone="ledger" strong />
+        <span className="text-ink-faint">=</span>
+        <Figure label={`Paid out · ${formatCount(totals.spendRows)}`} value={totals.spent} />
+        <span className="text-ink-faint">−</span>
+        <Figure
+          label={`Came back · ${formatCount(totals.receivedRows)}`}
+          value={totals.received}
+        />
+
+        {totals.adjustmentRows > 0 && (
+          <span className="ml-2 rounded-sm bg-review-soft px-2 py-1 text-[11px] text-review">
+            plus {formatCount(totals.adjustmentRows)} reconciliation adjustment
+            {totals.adjustmentRows === 1 ? '' : 's'} of{' '}
+            <span className="tnum font-medium">{totals.adjustments.toFixed(2)}</span>, not counted
+            above
+          </span>
+        )}
+      </div>
+
+      {totals.byCurrency.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line-soft pt-2 text-[13px]">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+            Original amounts
+          </span>
+          {totals.byCurrency.map((c) => (
+            <span key={c.code} className="tnum text-ink-muted">
+              <span className="font-medium text-ink">{c.code}</span>{' '}
+              {Math.abs(c.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              <span className="ml-1 text-ink-faint">· {formatCount(c.rows)}</span>
+            </span>
+          ))}
+          <span className="text-[11px] text-ink-faint">
+            listed separately — different currencies are never added together
+          </span>
+        </div>
+      )}
+
+      {copied === 'nocopy' && (
+        <p className="mt-1 text-[11px] text-negative">
+          The browser would not let the page copy. Select the figure and copy it by hand.
+        </p>
+      )}
+    </div>
   );
 }

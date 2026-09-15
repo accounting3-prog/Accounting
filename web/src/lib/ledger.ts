@@ -341,3 +341,92 @@ export const TXN_KIND_LABEL: Record<TxnKind, string> = {
   reconciliation_adjustment: 'Reconciliation adjustment',
   other: 'Other',
 };
+
+/* ------------------------------------------------------ totalling a result set */
+
+export interface ResultTotals {
+  /** Money out, as a positive figure. */
+  spent: number;
+  /** Money in — refunds and funding — as a positive figure. */
+  received: number;
+  /** spent − received. Positive means more went out than came back. */
+  net: number;
+  rows: number;
+  spendRows: number;
+  receivedRows: number;
+  /**
+   * Reconciliation adjustments, kept apart.
+   *
+   * An adjustment is not a transaction that happened; it is the named
+   * difference between what a sheet asserts and what its own rows add up to.
+   * Folding one into a spend total would present a discrepancy as a purchase.
+   */
+  adjustments: number;
+  adjustmentRows: number;
+  /**
+   * The original amounts, one figure per currency, never added together.
+   *
+   * 100 EUR and 100 JPY are not 200 of anything. The AED figures above are
+   * comparable because every card settles in AED; these are not, so they stay
+   * in separate buckets for as long as they are on screen.
+   */
+  byCurrency: { code: string; amount: number; rows: number }[];
+}
+
+/**
+ * What a set of rows adds up to.
+ *
+ * Written for the question people actually ask of a search — "how much did
+ * REQ 11973 cost us in the end" — which is a net figure: what went out, less
+ * what came back. A page that shows only the spending answers a different
+ * question and answers it confidently.
+ */
+export function totalsFor(transactions: Transaction[]): ResultTotals {
+  let spent = 0;
+  let received = 0;
+  let spendRows = 0;
+  let receivedRows = 0;
+  let adjustments = 0;
+  let adjustmentRows = 0;
+  const currencies = new Map<string, { amount: number; rows: number }>();
+
+  for (const t of transactions) {
+    if (t.status === 'voided') continue;
+
+    if (t.entry_type === 'reconciliation_adjustment') {
+      adjustments += t.amount_aed;
+      adjustmentRows += 1;
+      continue;
+    }
+
+    // amount_aed is signed at the source: spend negative, money in positive.
+    if (t.amount_aed < 0) {
+      spent += -t.amount_aed;
+      spendRows += 1;
+    } else if (t.amount_aed > 0) {
+      received += t.amount_aed;
+      receivedRows += 1;
+    }
+
+    if (t.currency && t.original_amount) {
+      const bucket = currencies.get(t.currency) ?? { amount: 0, rows: 0 };
+      bucket.amount += Math.abs(t.original_amount) * (t.amount_aed < 0 ? 1 : -1);
+      bucket.rows += 1;
+      currencies.set(t.currency, bucket);
+    }
+  }
+
+  return {
+    spent: round2(spent),
+    received: round2(received),
+    net: round2(spent - received),
+    rows: transactions.filter((t) => t.status !== 'voided').length,
+    spendRows,
+    receivedRows,
+    adjustments: round2(adjustments),
+    adjustmentRows,
+    byCurrency: [...currencies.entries()]
+      .map(([code, b]) => ({ code, amount: round2(b.amount), rows: b.rows }))
+      .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)),
+  };
+}
