@@ -383,7 +383,7 @@ export function Transactions() {
         ) : (
           <>
             <div className="scroll-x">
-              <table className="w-full min-w-[1080px] border-collapse text-[13px]">
+              <table className="w-full min-w-[1220px] border-collapse text-[13px]">
                 <thead>
                   <tr className="border-b border-line text-[11px] uppercase tracking-wide text-ink-faint">
                     <SortHeader label="Date" sortKey="date" active={sortKey === 'date'} dir={sortDir} onSort={onSort} />
@@ -394,6 +394,7 @@ export function Transactions() {
                     <th className="px-3 py-2 text-left font-medium">Type</th>
                     <th className="px-3 py-2 text-left font-medium">Request no.</th>
                     <th className="px-3 py-2 text-left font-medium">Payment ref.</th>
+                    <th className="px-3 py-2 text-left font-medium">Purchase order</th>
                     <SortHeader label="Status" sortKey="status" active={sortKey === 'status'} dir={sortDir} onSort={onSort} />
                   </tr>
                 </thead>
@@ -461,6 +462,9 @@ export function Transactions() {
                         </td>
                         <td className="max-w-[160px] truncate px-3 py-2 text-ink-muted">
                           {t.payment_ref ?? '—'}
+                        </td>
+                        <td className="max-w-[160px] truncate px-3 py-2 text-ink-muted">
+                          {t.purchase_order ?? '—'}
                         </td>
                         <td className="px-3 py-2">
                           <StatusPill status={t.status} />

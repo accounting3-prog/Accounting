@@ -1,11 +1,11 @@
 /**
- * The PO Box field, exercised against the real function.
+ * The purchase order field, exercised against the real function.
  *
  * A dry run of the migration proves only that it applies and that no balance
  * moves. It does not prove the field can be set, changed, cleared, or that
  * changing it is recorded — and it does not prove the field survives an edit
  * that is about something else entirely, which is the way a quiet data loss
- * would actually happen: someone corrects an amount and the PO Box vanishes.
+ * would actually happen: someone corrects an amount and the purchase order vanishes.
  *
  * Every check is made against what the database holds afterwards, read back in
  * a separate query, never against what the call returned.
@@ -13,7 +13,7 @@
  * The migration is applied inside this script's own transaction and rolled
  * back, so it is safe to run before it has been applied for real.
  *
- *   LEDGER_DEPS=... node scripts/db/po_box_test.mjs
+ *   LEDGER_DEPS=... node scripts/db/purchase_order_test.mjs
  */
 
 import { readFile } from 'node:fs/promises';
@@ -25,7 +25,11 @@ const check = (label, ok, detail = '') => {
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${label.padEnd(62)}${detail}`);
 };
 
-const migration = (await readFile('supabase/migrations/025_po_box.sql', 'utf8'))
+// 027 is the current definition and is self-sufficient: it renames the column
+// 025 and 026 created, under whichever name it still carries, and creates it
+// otherwise. So
+// applying it alone reproduces exactly the state the live database is in.
+const migration = (await readFile('supabase/migrations/027_purchase_order.sql', 'utf8'))
   .replace(/^\s*begin\s*;\s*$/gim, '')
   .replace(/^\s*commit\s*;\s*$/gim, '');
 
@@ -33,7 +37,7 @@ const client = await connect();
 
 try {
   console.log('='.repeat(92));
-  console.log('PO BOX — set, changed, cleared, and left alone');
+  console.log('PURCHASE ORDER — set, changed, cleared, and left alone');
   console.log('='.repeat(92));
 
   // An owner, specifically. transaction_corrections is readable only by one
@@ -54,7 +58,7 @@ try {
     const [col] = await q(
       client,
       `select data_type, is_nullable from information_schema.columns
-        where table_name = 'transactions' and column_name = 'po_box'`,
+        where table_name = 'transactions' and column_name = 'purchase_order'`,
     );
     check('the column exists and is optional', col?.data_type === 'text' && col.is_nullable === 'YES',
           `${col?.data_type ?? 'missing'}`);
@@ -100,8 +104,8 @@ try {
     if (!row) throw new Error('no confirmed converted row to edit');
     console.log(`\n  editing: ${row.supplier_raw} · ${row.amount} AED\n`);
 
-    const poBoxOf = async (id) =>
-      (await q(client, 'select po_box from transactions where id = $1', [id]))[0].po_box;
+    const purchaseOrderOf = async (id) =>
+      (await q(client, 'select purchase_order from transactions where id = $1', [id]))[0].purchase_order;
 
     // created_at defaults to now(), which is frozen for the whole transaction:
     // every correction this test writes carries the same timestamp, so "the
@@ -124,8 +128,8 @@ try {
     const edit = (args) =>
       client.query(
         `select update_transaction(
-            p_id := $1, p_rationale := $2, p_po_box := $3, p_payment_ref := $4)`,
-        [row.id, args.why, args.poBox, args.paymentRef ?? null],
+            p_id := $1, p_rationale := $2, p_purchase_order := $3, p_payment_ref := $4)`,
+        [row.id, args.why, args.purchaseOrder, args.paymentRef ?? null],
       );
 
     // Anything already on the row from its own history is not this test's.
@@ -134,64 +138,64 @@ try {
 
     /* ----------------------------------------------------------------- set it */
 
-    await edit({ why: 'Recording the supplier PO Box from the invoice.', poBox: ' P.O. Box 12345, Dubai ' });
-    const set = await poBoxOf(row.id);
-    check('a PO Box can be set', set === 'P.O. Box 12345, Dubai', `stored ${JSON.stringify(set)}`);
+    await edit({ why: 'Recording the purchase order from the invoice.', purchaseOrder: ' PO-2026-0041 ' });
+    const set = await purchaseOrderOf(row.id);
+    check('a purchase order can be set', set === 'PO-2026-0041', `stored ${JSON.stringify(set)}`);
 
     const logged = await lastChange();
-    const box = logged.field_changes?.po_box;
+    const box = logged.field_changes?.purchase_order;
     check('setting it is recorded with its before and after',
-          box != null && box.from === null && box.to === 'P.O. Box 12345, Dubai',
+          box != null && box.from === null && box.to === 'PO-2026-0041',
           `${JSON.stringify(box?.from ?? null)} -> ${JSON.stringify(box?.to)}`);
     check('and with the reason the editor gave',
-          /PO Box from the invoice/.test(logged.rationale ?? ''));
+          /purchase order from the invoice/.test(logged.rationale ?? ''));
 
     /* -------------------------------------------------------------- change it */
 
-    await edit({ why: 'Corrected: the invoice shows 54321.', poBox: 'P.O. Box 54321, Abu Dhabi' });
+    await edit({ why: 'Corrected: the invoice shows PO-2026-0099.', purchaseOrder: 'PO-2026-0099' });
     await lastChange();
-    check('it can be changed', (await poBoxOf(row.id)) === 'P.O. Box 54321, Abu Dhabi');
+    check('it can be changed', (await purchaseOrderOf(row.id)) === 'PO-2026-0099');
 
     /* ------------------------------------------- an edit about something else */
 
     // The quiet failure this test exists for. Someone corrects a figure; the
-    // PO Box must not disappear because the form did not mention it.
+    // PO must not disappear because the form did not mention it.
     await edit({
-      why: 'Unrelated edit — the PO Box must survive it.',
-      poBox: null,
+      why: 'Unrelated edit — the purchase order must survive it.',
+      purchaseOrder: null,
       paymentRef: 'PAY-SET-BY-PO-BOX-TEST',
     });
     check('an edit that does not mention it leaves it alone',
-          (await poBoxOf(row.id)) === 'P.O. Box 54321, Abu Dhabi');
+          (await purchaseOrderOf(row.id)) === 'PO-2026-0099');
 
     const untouched = await lastChange();
     check('and does not claim in the history that it changed',
-          !('po_box' in (untouched.field_changes ?? {})),
+          !('purchase_order' in (untouched.field_changes ?? {})),
           Object.keys(untouched.field_changes ?? {}).join(', '));
 
     /* --------------------------------------------------------------- clear it */
 
-    await edit({ why: 'The PO Box was entered against the wrong supplier.', poBox: '' });
-    check('an empty value clears it', (await poBoxOf(row.id)) === null);
+    await edit({ why: 'The purchase order was entered against the wrong supplier.', purchaseOrder: '' });
+    check('an empty value clears it', (await purchaseOrderOf(row.id)) === null);
 
-    const cleared = (await lastChange()).field_changes?.po_box;
+    const cleared = (await lastChange()).field_changes?.purchase_order;
     check('clearing it is recorded too, not silent',
-          cleared != null && cleared.from === 'P.O. Box 54321, Abu Dhabi' && cleared.to === null,
+          cleared != null && cleared.from === 'PO-2026-0099' && cleared.to === null,
           `${JSON.stringify(cleared?.from)} -> ${JSON.stringify(cleared?.to ?? null)}`);
 
     /* -------------------------------------------- it is not a way past the rules */
 
-    // A PO Box is still an edit, and an edit without a reason is refused.
+    // A purchase order is still an edit, and an edit without a reason is refused.
     let refused = null;
     try {
       await client.query(
-        `select update_transaction(p_id := $1, p_rationale := $2, p_po_box := $3)`,
-        [row.id, '   ', 'P.O. Box 1'],
+        `select update_transaction(p_id := $1, p_rationale := $2, p_purchase_order := $3)`,
+        [row.id, '   ', 'PO-2026-0001'],
       );
     } catch (e) {
       refused = e.message;
     }
-    check('changing only the PO Box still needs a stated reason',
+    check('changing only the purchase order still needs a stated reason',
           /reason is required/i.test(refused ?? ''), refused ? '' : 'IT WAS ALLOWED');
   } catch (e) {
     // A check that cannot even run is a failure, and it should read as one
@@ -211,7 +215,7 @@ try {
   const [after] = await q(
     client,
     `select count(*)::int n from information_schema.columns
-      where table_name = 'transactions' and column_name = 'po_box'`,
+      where table_name = 'transactions' and column_name = 'purchase_order'`,
   );
   console.log(
     `\n  rolled back — the column is ${after.n ? 'present (already applied for real)' : 'gone again'}`,
@@ -225,6 +229,6 @@ if (failures) {
   console.log(`${failures} CHECK(S) FAILED`);
   process.exit(1);
 }
-console.log('A PO Box can be set, changed and cleared; every change is recorded; an');
+console.log('A purchase order can be set, changed and cleared; every change is recorded; an');
 console.log('unrelated edit leaves it standing.');
 console.log('='.repeat(92));
