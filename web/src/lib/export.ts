@@ -116,7 +116,6 @@ export const EXPORT_COLUMNS: Column[] = [
             : '',
   },
   { header: 'Payment reference', get: (t) => t.payment_ref ?? '' },
-  { header: 'Purchase order', get: (t) => t.purchase_order ?? '' },
   { header: 'LPO number', get: (t) => t.lpo_number ?? '' },
   { header: 'Invoice', get: (t) => t.invoice ?? '' },
   { header: 'CRM', get: (t) => t.crm ?? '' },

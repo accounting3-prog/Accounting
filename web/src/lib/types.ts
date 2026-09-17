@@ -113,8 +113,6 @@ export interface Transaction {
   lpo_number?: string;
   invoice?: string;
   payment_ref?: string;
-  /** The purchase order, as free text: formats differ by counterparty. */
-  purchase_order?: string;
   account?: string;
   crm?: string;
   client?: string;

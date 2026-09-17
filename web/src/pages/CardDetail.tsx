@@ -361,11 +361,12 @@ export function CardDetail() {
               />
             ) : (
               <div className="scroll-x">
-                <table className="w-full min-w-[620px] border-collapse text-[13px]">
+                <table className="w-full min-w-[780px] border-collapse text-[13px]">
                   <thead>
                     <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-ink-faint">
                       <th className="px-4 py-2 font-medium">Date</th>
                       <th className="px-4 py-2 font-medium">Supplier</th>
+                      <th className="px-4 py-2 font-medium">LPO number</th>
                       <th className="px-4 py-2 text-right font-medium">Original</th>
                       <th className="px-4 py-2 text-right font-medium">AED</th>
                       <th className="px-4 py-2 font-medium">Status</th>
@@ -383,6 +384,9 @@ export function CardDetail() {
                         </td>
                         <td className="max-w-[200px] truncate px-4 py-2">
                           {t.supplier ?? t.description ?? '—'}
+                        </td>
+                        <td className="max-w-[150px] truncate px-4 py-2 text-ink-muted">
+                          {t.lpo_number ?? '—'}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-right text-ink-muted">
                           {t.currency && t.currency !== 'AED' && t.original_amount != null ? (

@@ -272,12 +272,13 @@ export function ReviewQueue() {
               <EmptyState title="No items of this kind" />
             ) : (
               <div className="scroll-x">
-                <table className="w-full min-w-[900px] border-collapse text-[13px]">
+                <table className="w-full min-w-[1020px] border-collapse text-[13px]">
                   <thead>
                     <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-ink-faint">
                       <th className="px-4 py-2 font-medium">Reason</th>
                       <th className="px-4 py-2 font-medium">Source</th>
                       <th className="px-4 py-2 font-medium">Supplier</th>
+                      <th className="px-4 py-2 font-medium">LPO number</th>
                       <th className="px-4 py-2 text-right font-medium">Effect</th>
                       <th className="px-4 py-2 font-medium">Status</th>
                       <th className="px-4 py-2 font-medium" />
@@ -302,6 +303,9 @@ export function ReviewQueue() {
                         </td>
                         <td className="max-w-[200px] truncate px-4 py-2.5">
                           {t.supplier ?? t.description ?? '—'}
+                        </td>
+                        <td className="max-w-[150px] truncate px-4 py-2.5 text-ink-muted">
+                          {t.lpo_number ?? '—'}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2.5 text-right">
                           <Money amount={t.amount_aed} signed tone="ledger" code={false} />

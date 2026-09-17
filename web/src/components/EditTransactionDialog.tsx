@@ -47,7 +47,7 @@ export function EditTransactionDialog({
   const [supplier, setSupplier] = useState('');
   const [req, setReq] = useState('');
   const [paymentRef, setPaymentRef] = useState('');
-  const [purchaseOrder, setPurchaseOrder] = useState('');
+  const [lpoNumber, setLpoNumber] = useState('');
   const [currency, setCurrency] = useState('');
   const [originalAmount, setOriginalAmount] = useState('');
   const [rate, setRate] = useState('');
@@ -64,7 +64,7 @@ export function EditTransactionDialog({
     setSupplier(transaction.supplier ?? '');
     setReq(transaction.req_number ?? '');
     setPaymentRef(transaction.payment_ref ?? '');
-    setPurchaseOrder(transaction.purchase_order ?? '');
+    setLpoNumber(transaction.lpo_number ?? '');
     setCurrency(transaction.currency ?? '');
     setOriginalAmount(
       transaction.original_amount != null ? String(transaction.original_amount) : '',
@@ -94,7 +94,7 @@ export function EditTransactionDialog({
     supplier !== (t.supplier ?? '') ||
     req !== (t.req_number ?? '') ||
     paymentRef !== (t.payment_ref ?? '') ||
-    purchaseOrder !== (t.purchase_order ?? '') ||
+    lpoNumber !== (t.lpo_number ?? '') ||
     currency !== (t.currency ?? '') ||
     originalAmount !== (t.original_amount != null ? String(t.original_amount) : '') ||
     rate !== (t.exchange_rate != null ? String(t.exchange_rate) : '') ||
@@ -115,9 +115,9 @@ export function EditTransactionDialog({
       p_req_number: req.trim() || null,
       p_payment_ref: paymentRef.trim() || null,
       // Sent even when empty, unlike the fields above: an empty string tells
-      // the database to clear the purchase order, where null would mean
+      // the database to clear the LPO number, where null would mean
       // 'unchanged'.
-      p_purchase_order: purchaseOrder.trim(),
+      p_lpo_number: lpoNumber.trim(),
       p_currency: currency || null,
       p_original_amount: originalAmount ? Number(originalAmount) : null,
       p_exchange_rate: rate ? Number(rate) : null,
@@ -175,11 +175,12 @@ export function EditTransactionDialog({
             <Field label="Payment reference">
               <input value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} className={fieldClass} />
             </Field>
-            <Field label="Purchase order">
+            <Field label="LPO number">
               <input
-                value={purchaseOrder}
-                onChange={(e) => setPurchaseOrder(e.target.value)}
+                value={lpoNumber}
+                onChange={(e) => setLpoNumber(e.target.value)}
                 className={fieldClass}
+                placeholder="LPO-MICE-12672"
               />
             </Field>
             <Field label="Original currency">

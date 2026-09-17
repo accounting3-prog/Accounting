@@ -1,11 +1,11 @@
 /**
- * The purchase order field, exercised against the real function.
+ * Every field update_transaction writes, exercised against the real function.
  *
  * A dry run of the migration proves only that it applies and that no balance
  * moves. It does not prove the field can be set, changed, cleared, or that
  * changing it is recorded — and it does not prove the field survives an edit
  * that is about something else entirely, which is the way a quiet data loss
- * would actually happen: someone corrects an amount and the purchase order vanishes.
+ * would actually happen: someone corrects an amount and the LPO vanishes.
  *
  * Every check is made against what the database holds afterwards, read back in
  * a separate query, never against what the call returned.
@@ -13,7 +13,7 @@
  * The migration is applied inside this script's own transaction and rolled
  * back, so it is safe to run before it has been applied for real.
  *
- *   LEDGER_DEPS=... node scripts/db/purchase_order_test.mjs
+ *   LEDGER_DEPS=... node scripts/db/editable_fields_test.mjs
  */
 
 import { readFile } from 'node:fs/promises';
@@ -25,11 +25,11 @@ const check = (label, ok, detail = '') => {
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${label.padEnd(62)}${detail}`);
 };
 
-// 027 is the current definition and is self-sufficient: it renames the column
+// 028 is the current definition and is self-sufficient: it renames the column
 // 025 and 026 created, under whichever name it still carries, and creates it
 // otherwise. So
 // applying it alone reproduces exactly the state the live database is in.
-const migration = (await readFile('supabase/migrations/027_purchase_order.sql', 'utf8'))
+const migration = (await readFile('supabase/migrations/028_lpo_number_is_the_field.sql', 'utf8'))
   .replace(/^\s*begin\s*;\s*$/gim, '')
   .replace(/^\s*commit\s*;\s*$/gim, '');
 
@@ -37,7 +37,7 @@ const client = await connect();
 
 try {
   console.log('='.repeat(92));
-  console.log('PURCHASE ORDER — set, changed, cleared, and left alone');
+  console.log('THE EDITABLE FIELDS — every one of them actually writable');
   console.log('='.repeat(92));
 
   // An owner, specifically. transaction_corrections is readable only by one
@@ -58,10 +58,19 @@ try {
     const [col] = await q(
       client,
       `select data_type, is_nullable from information_schema.columns
-        where table_name = 'transactions' and column_name = 'purchase_order'`,
+        where table_name = 'transactions' and column_name = 'lpo_number'`,
     );
     check('the column exists and is optional', col?.data_type === 'text' && col.is_nullable === 'YES',
           `${col?.data_type ?? 'missing'}`);
+
+    // The column the three earlier migrations added, which was never the right
+    // one and never held a value.
+    const [stray] = await q(
+      client,
+      `select count(*)::int n from information_schema.columns
+        where table_name = 'transactions' and column_name in ('purchase_order', 'po', 'po_box')`,
+    );
+    check('and the column added by mistake is gone', stray.n === 0, `${stray.n} found`);
 
     // The whole reason the old signature is dropped first. Two overloads and
     // every named-argument call from the app becomes ambiguous.
@@ -104,8 +113,8 @@ try {
     if (!row) throw new Error('no confirmed converted row to edit');
     console.log(`\n  editing: ${row.supplier_raw} · ${row.amount} AED\n`);
 
-    const purchaseOrderOf = async (id) =>
-      (await q(client, 'select purchase_order from transactions where id = $1', [id]))[0].purchase_order;
+    const lpoOf = async (id) =>
+      (await q(client, 'select lpo_number from transactions where id = $1', [id]))[0].lpo_number;
 
     // created_at defaults to now(), which is frozen for the whole transaction:
     // every correction this test writes carries the same timestamp, so "the
@@ -128,8 +137,8 @@ try {
     const edit = (args) =>
       client.query(
         `select update_transaction(
-            p_id := $1, p_rationale := $2, p_purchase_order := $3, p_payment_ref := $4)`,
-        [row.id, args.why, args.purchaseOrder, args.paymentRef ?? null],
+            p_id := $1, p_rationale := $2, p_lpo_number := $3, p_payment_ref := $4)`,
+        [row.id, args.why, args.lpo, args.paymentRef ?? null],
       );
 
     // Anything already on the row from its own history is not this test's.
@@ -138,64 +147,109 @@ try {
 
     /* ----------------------------------------------------------------- set it */
 
-    await edit({ why: 'Recording the purchase order from the invoice.', purchaseOrder: ' PO-2026-0041 ' });
-    const set = await purchaseOrderOf(row.id);
-    check('a purchase order can be set', set === 'PO-2026-0041', `stored ${JSON.stringify(set)}`);
+    await edit({ why: 'Recording the LPO from the paperwork.', lpo: ' LPO-TEST-0041 ' });
+    const set = await lpoOf(row.id);
+    check('an LPO number can be set', set === 'LPO-TEST-0041', `stored ${JSON.stringify(set)}`);
 
     const logged = await lastChange();
-    const box = logged.field_changes?.purchase_order;
+    const box = logged.field_changes?.lpo_number;
     check('setting it is recorded with its before and after',
-          box != null && box.from === null && box.to === 'PO-2026-0041',
+          box != null && box.from === null && box.to === 'LPO-TEST-0041',
           `${JSON.stringify(box?.from ?? null)} -> ${JSON.stringify(box?.to)}`);
     check('and with the reason the editor gave',
-          /purchase order from the invoice/.test(logged.rationale ?? ''));
+          /LPO from the paperwork/.test(logged.rationale ?? ''));
 
     /* -------------------------------------------------------------- change it */
 
-    await edit({ why: 'Corrected: the invoice shows PO-2026-0099.', purchaseOrder: 'PO-2026-0099' });
+    await edit({ why: 'Corrected: the paperwork shows LPO-TEST-0099.', lpo: 'LPO-TEST-0099' });
     await lastChange();
-    check('it can be changed', (await purchaseOrderOf(row.id)) === 'PO-2026-0099');
+    check('it can be changed', (await lpoOf(row.id)) === 'LPO-TEST-0099');
 
     /* ------------------------------------------- an edit about something else */
 
     // The quiet failure this test exists for. Someone corrects a figure; the
     // PO must not disappear because the form did not mention it.
     await edit({
-      why: 'Unrelated edit — the purchase order must survive it.',
-      purchaseOrder: null,
+      why: 'Unrelated edit — the LPO must survive it.',
+      lpo: null,
       paymentRef: 'PAY-SET-BY-PO-BOX-TEST',
     });
     check('an edit that does not mention it leaves it alone',
-          (await purchaseOrderOf(row.id)) === 'PO-2026-0099');
+          (await lpoOf(row.id)) === 'LPO-TEST-0099');
 
     const untouched = await lastChange();
     check('and does not claim in the history that it changed',
-          !('purchase_order' in (untouched.field_changes ?? {})),
+          !('lpo_number' in (untouched.field_changes ?? {})),
           Object.keys(untouched.field_changes ?? {}).join(', '));
 
     /* --------------------------------------------------------------- clear it */
 
-    await edit({ why: 'The purchase order was entered against the wrong supplier.', purchaseOrder: '' });
-    check('an empty value clears it', (await purchaseOrderOf(row.id)) === null);
+    await edit({ why: 'The LPO was entered against the wrong supplier.', lpo: '' });
+    check('an empty value clears it', (await lpoOf(row.id)) === null);
 
-    const cleared = (await lastChange()).field_changes?.purchase_order;
+    const cleared = (await lastChange()).field_changes?.lpo_number;
     check('clearing it is recorded too, not silent',
-          cleared != null && cleared.from === 'PO-2026-0099' && cleared.to === null,
+          cleared != null && cleared.from === 'LPO-TEST-0099' && cleared.to === null,
           `${JSON.stringify(cleared?.from)} -> ${JSON.stringify(cleared?.to ?? null)}`);
+
+    /* ------------------------ every field the function writes is truly writable */
+
+    // The bug 028 fixes. Each of these was refused with "Nothing was changed"
+    // because the function wrote the column but never compared it — so it
+    // genuinely believed nothing had changed. Two of them, invoice and
+    // lpo_number, are offered by the "fill in a missing field by re-importing
+    // the sheet" feature, which therefore could not work for them.
+    //
+    // A savepoint each: one raised exception poisons the whole transaction,
+    // and without this every probe after the first would report the same
+    // misleading "current transaction is aborted".
+    console.log('');
+    for (const [label, param, value] of [
+      ['LPO number', 'p_lpo_number', 'LPO-ALONE-1'],
+      ['invoice', 'p_invoice', 'INV-ALONE-1'],
+      ['CRM', 'p_crm', 'CRM-ALONE-1'],
+      ['client', 'p_client', 'CLIENT-ALONE-1'],
+      ['sales operation', 'p_sales_operation', 'OPS-ALONE-1'],
+      ['notes', 'p_notes', 'note set on its own'],
+      ['payment reference', 'p_payment_ref', 'PAY-ALONE-1'],
+      ['request number', 'p_req_number', 'REQ-ALONE-1'],
+    ]) {
+      await client.query('savepoint probe');
+      let failure = null;
+      try {
+        await client.query(
+          `select update_transaction(p_id := $1, p_rationale := $2, ${param} := $3)`,
+          [row.id, `Setting the ${label} on its own.`, value],
+        );
+      } catch (e) {
+        failure = e.message;
+      }
+      // Read back from the table, not from what the call returned.
+      const stored = failure
+        ? null
+        : (await q(client, `select ${param.slice(2)} as v from transactions where id = $1`,
+                   [row.id]))[0].v;
+      check(`${label} can be changed on its own`, failure === null && stored === value,
+            failure ?? `stored ${JSON.stringify(stored)}`);
+      await client.query('rollback to savepoint probe');
+    }
+    // The probes are rolled back, so the corrections they wrote are gone too.
+    (await q(client, `select id::text from transaction_corrections where transaction_id = $1`,
+             [row.id])).forEach((r) => seen.add(r.id));
 
     /* -------------------------------------------- it is not a way past the rules */
 
-    // A purchase order is still an edit, and an edit without a reason is refused.
+    // An LPO is still an edit, and an edit without a reason is refused.
     let refused = null;
     try {
       await client.query(
-        `select update_transaction(p_id := $1, p_rationale := $2, p_purchase_order := $3)`,
-        [row.id, '   ', 'PO-2026-0001'],
+        `select update_transaction(p_id := $1, p_rationale := $2, p_lpo_number := $3)`,
+        [row.id, '   ', 'LPO-TEST-0001'],
       );
     } catch (e) {
       refused = e.message;
     }
-    check('changing only the purchase order still needs a stated reason',
+    check('changing only the LPO still needs a stated reason',
           /reason is required/i.test(refused ?? ''), refused ? '' : 'IT WAS ALLOWED');
   } catch (e) {
     // A check that cannot even run is a failure, and it should read as one
@@ -215,7 +269,7 @@ try {
   const [after] = await q(
     client,
     `select count(*)::int n from information_schema.columns
-      where table_name = 'transactions' and column_name = 'purchase_order'`,
+      where table_name = 'transactions' and column_name = 'lpo_number'`,
   );
   console.log(
     `\n  rolled back — the column is ${after.n ? 'present (already applied for real)' : 'gone again'}`,
@@ -229,6 +283,6 @@ if (failures) {
   console.log(`${failures} CHECK(S) FAILED`);
   process.exit(1);
 }
-console.log('A purchase order can be set, changed and cleared; every change is recorded; an');
+console.log('Every field can be set, changed and cleared; every change is recorded; an');
 console.log('unrelated edit leaves it standing.');
 console.log('='.repeat(92));

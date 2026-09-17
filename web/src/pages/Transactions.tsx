@@ -394,7 +394,7 @@ export function Transactions() {
                     <th className="px-3 py-2 text-left font-medium">Type</th>
                     <th className="px-3 py-2 text-left font-medium">Request no.</th>
                     <th className="px-3 py-2 text-left font-medium">Payment ref.</th>
-                    <th className="px-3 py-2 text-left font-medium">Purchase order</th>
+                    <th className="px-3 py-2 text-left font-medium">LPO number</th>
                     <SortHeader label="Status" sortKey="status" active={sortKey === 'status'} dir={sortDir} onSort={onSort} />
                   </tr>
                 </thead>
@@ -464,7 +464,7 @@ export function Transactions() {
                           {t.payment_ref ?? '—'}
                         </td>
                         <td className="max-w-[160px] truncate px-3 py-2 text-ink-muted">
-                          {t.purchase_order ?? '—'}
+                          {t.lpo_number ?? '—'}
                         </td>
                         <td className="px-3 py-2">
                           <StatusPill status={t.status} />
