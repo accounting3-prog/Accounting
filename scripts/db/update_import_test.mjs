@@ -36,6 +36,24 @@ const { parseXlsx, analyseSheet, buildUpdateRows } = await load(
   'web/src/lib/importFile.ts',
 );
 
+/**
+ * Which field to fill in. The Import screen offers four, and until migration
+ * 028 only two of them could be written at all — update_transaction wrote the
+ * other two but never recorded them, so every row came back "Nothing was
+ * changed". Testing one field and assuming the rest behave is exactly how that
+ * went unnoticed, so the field is a parameter now.
+ */
+const FIELD = process.env.UPDATE_FIELD ?? 'payment_ref';
+const COLUMNS = {
+  payment_ref: 'Payment reference',
+  req_number: 'Request number',
+  invoice: 'Invoice',
+  lpo_number: 'LPO number',
+};
+const COLUMN = COLUMNS[FIELD];
+if (!COLUMN) throw new Error(`UPDATE_FIELD must be one of: ${Object.keys(COLUMNS).join(', ')}`);
+const LABEL = COLUMN.toLowerCase();
+
 let failures = 0;
 const check = (label, ok, detail = '') => {
   if (!ok) failures++;
@@ -107,7 +125,7 @@ try {
   if (!owner) throw new Error('no owner account to run as');
 
   console.log('='.repeat(96));
-  console.log('FILLING IN A MISSING PAYMENT REFERENCE BY ROUND TRIP');
+  console.log(`FILLING IN A MISSING ${COLUMN.toUpperCase()} BY ROUND TRIP`);
   console.log('='.repeat(96));
 
   await client.query('begin');
@@ -119,8 +137,22 @@ try {
     `select b.*, c.source_header_row, c.decreasing_column, c.decreasing_header,
             c.increasing_column, c.increasing_header, c.balance_formula
        from card_balances b join cards c on c.id = b.card_id
-      where b.card_name = 'MASTERCARD 6404 VPAY'`,
+      where c.id = (
+        -- The card that actually has gaps in THIS field, rather than one named
+        -- here. Only 4 rows in the whole ledger lack a request number, and a
+        -- hard-coded card reported that as a failure of the feature when it was
+        -- nothing of the kind.
+        select t.card_id from transactions t
+         where t.status <> 'voided' and coalesce(btrim(t.${FIELD}), '') = ''
+         group by t.card_id order by count(*) desc limit 1)`,
   );
+  if (!cardRow) {
+    console.log(`\n  Nothing to fill in: every row already has a ${LABEL}.`);
+    console.log('  That is a complete ledger, not a failing test.\n');
+    await client.query('rollback');
+    await client.end();
+    process.exit(0);
+  }
   const card = cardFromDb(cardRow);
 
   /* -------------------------------------------- 1. the rows missing one */
@@ -135,11 +167,11 @@ try {
             source_sheet, source_row, occurrence
        from transactions
       where card_id = $1 and status <> 'voided'
-        and coalesce(btrim(payment_ref), '') = ''
+        and coalesce(btrim(${FIELD}), '') = ''
       order by txn_date limit 12`,
     [card.id],
   );
-  check('the card has rows with no payment reference', missing.length > 0, `${missing.length}`);
+  check(`the card has rows with no ${LABEL}`, missing.length > 0, `${missing.length}`);
 
   const ids = missing.map((t) => t.id);
   const before = await q(client, SNAPSHOT, [ids]);
@@ -157,8 +189,8 @@ try {
 
   const headers = sheet.rows[headerRow];
   const idCol = headers.indexOf('Ledger ID');
-  const refCol = headers.indexOf('Payment reference');
-  check('and a Payment reference column to fill in', refCol >= 0, `column ${colLetter(refCol)}`);
+  const refCol = headers.indexOf(COLUMN);
+  check(`and a ${COLUMN} column to fill in`, refCol >= 0, `column ${colLetter(refCol)}`);
 
   /* --------------------------------------- 3. type the references in */
 
@@ -184,7 +216,7 @@ try {
     [card.id],
   );
   const rows = buildUpdateRows(reparsed, analysis.headerRow, analysis.mapping, {
-    field: 'payment_ref',
+    field: FIELD,
     existing: all,
     cardId: card.id,
   });
@@ -201,8 +233,8 @@ try {
 
   for (const r of rows.filter((x) => x.include)) {
     await client.query(
-      `select update_transaction(p_id := $1, p_rationale := $2, p_payment_ref := $3)`,
-      [r.id, `Payment reference filled in from a file, row ${r.sourceRow}.`, r.value],
+      `select update_transaction(p_id := $1, p_rationale := $2, p_${FIELD} := $3)`,
+      [r.id, `${COLUMN} filled in from a file, row ${r.sourceRow}.`, r.value],
     );
   }
 
@@ -217,14 +249,14 @@ try {
   // rows are in sheet order, so comparing them index by index compares
   // different transactions and can pass or fail for no reason at all.
   const wanted = new Map(rows.filter((r) => r.include).map((r) => [r.id, r.value]));
-  const wrong = after.filter((a) => a.payment_ref !== wanted.get(a.id));
-  check('the reference was written on every row',
+  const wrong = after.filter((a) => a[FIELD] !== wanted.get(a.id));
+  check(`the ${LABEL} was written on every row`,
         wrong.length === 0 && wanted.size === after.length,
         wrong.length ? `${wrong.length} rows got the wrong value` : `${after.length} rows`);
 
   // The whole point. dedup_key is expected to move — it is a hash of the
   // content, and the content changed — and updated_at with it.
-  const ALLOWED = new Set(['payment_ref', 'dedup_key', 'updated_at', 'search_text']);
+  const ALLOWED = new Set([FIELD, 'dedup_key', 'updated_at', 'search_text']);
   const changed = new Set();
   for (let i = 0; i < before.length; i++) {
     for (const key of Object.keys(before[i])) {
@@ -244,11 +276,26 @@ try {
         balAfter.s === balBefore.s, `${money(balBefore.s)} -> ${money(balAfter.s)}`);
   check('no row was created', balAfter.n === balBefore.n, `${balBefore.n} -> ${balAfter.n}`);
 
-  // The key must now describe the row as it is, or a later import of the same
-  // transaction would compute a different key and write a duplicate.
-  const stale = after.filter((a, i) => a.dedup_key === before[i].dedup_key);
-  check('the dedup key was recomputed to match the new content',
-        stale.length === 0, `${stale.length} rows kept a stale key`);
+  // The key is a hash of the row's IDENTIFYING content: card, date, signed
+  // amount, supplier, payment reference, request number, direction, occurrence.
+  // So what is correct here depends on the field being filled in, and asserting
+  // one rule for all four would be wrong twice over.
+  //
+  //   payment_ref, req_number   in the key — it must be recomputed, or a later
+  //                             import of the same transaction would compute a
+  //                             different key, find nothing, and duplicate it.
+  //   invoice, lpo_number       not in the key — it must NOT move. A key that
+  //                             changed here would mean the key depends on
+  //                             something that does not identify the row.
+  const inTheKey = FIELD === 'payment_ref' || FIELD === 'req_number';
+  const moved = after.filter((a, i) => a.dedup_key !== before[i].dedup_key).length;
+  check(
+    inTheKey
+      ? 'the dedup key was recomputed to match the new content'
+      : `the dedup key is untouched, because the ${LABEL} does not identify a row`,
+    inTheKey ? moved === after.length : moved === 0,
+    inTheKey ? `${after.length - moved} rows kept a stale key` : `${moved} rows moved`,
+  );
   check('and the keys are still unique',
         new Set(after.map((a) => a.dedup_key)).size === after.length);
 
@@ -264,7 +311,7 @@ try {
   check('recording the before and after of the reference only',
         trail.every((t) => {
           const keys = Object.keys(t.changes ?? {});
-          return keys.length === 1 && keys[0] === 'payment_ref';
+          return keys.length === 1 && keys[0] === FIELD;
         }),
         JSON.stringify(trail[0]?.changes ?? {}).slice(0, 70));
 
@@ -282,7 +329,7 @@ try {
     parseXlsx(tampered)[0],
     analysis.headerRow,
     analysis.mapping,
-    { field: 'payment_ref', existing: all, cardId: card.id },
+    { field: FIELD, existing: all, cardId: card.id },
   );
   const first = tamperedRows[0];
   check('a line whose amount was edited in the spreadsheet is stopped',
@@ -296,7 +343,7 @@ try {
 
   const [otherCard] = await q(client, `select id from cards where id <> $1 limit 1`, [card.id]);
   const wrongCard = buildUpdateRows(reparsed, analysis.headerRow, analysis.mapping, {
-    field: 'payment_ref',
+    field: FIELD,
     existing: all,
     cardId: otherCard.id,
   });
