@@ -147,18 +147,27 @@ export function Layout() {
         </div>
       )}
 
-      {/* Desktop sidebar */}
-      <aside className="hidden w-56 shrink-0 flex-col border-r border-line bg-surface lg:flex">
-        <div className="px-4 py-4">
+      {/* Desktop sidebar.
+
+          Sticky and exactly one screen tall. Without the explicit height it
+          stretches to the height of the page — so on a long ledger the nav
+          scrolled away upwards and "Data source" sat at the very bottom of the
+          document, thousands of pixels below the fold. Both are things you
+          reach for WHILE reading a long page, so both stay on screen.
+
+          The nav itself scrolls if it is ever taller than the viewport, which
+          keeps the data source reachable rather than pushed off the end. */}
+      <aside className="hidden w-56 shrink-0 flex-col border-r border-line bg-surface lg:sticky lg:top-0 lg:flex lg:h-screen">
+        <div className="shrink-0 px-4 py-4">
           <div className="text-[13px] font-semibold tracking-tight text-ink">
             Card Ledger
           </div>
           <div className="text-[11px] text-ink-muted">Multi-currency reconciliation</div>
         </div>
-        <div className="px-2.5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-2.5">
           <NavItems />
         </div>
-        <div className="mt-auto">
+        <div className="shrink-0">
           <SourceBadge />
         </div>
       </aside>
