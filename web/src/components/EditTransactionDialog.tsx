@@ -47,6 +47,7 @@ export function EditTransactionDialog({
   const [supplier, setSupplier] = useState('');
   const [req, setReq] = useState('');
   const [paymentRef, setPaymentRef] = useState('');
+  const [poBox, setPoBox] = useState('');
   const [currency, setCurrency] = useState('');
   const [originalAmount, setOriginalAmount] = useState('');
   const [rate, setRate] = useState('');
@@ -63,6 +64,7 @@ export function EditTransactionDialog({
     setSupplier(transaction.supplier ?? '');
     setReq(transaction.req_number ?? '');
     setPaymentRef(transaction.payment_ref ?? '');
+    setPoBox(transaction.po_box ?? '');
     setCurrency(transaction.currency ?? '');
     setOriginalAmount(
       transaction.original_amount != null ? String(transaction.original_amount) : '',
@@ -92,6 +94,7 @@ export function EditTransactionDialog({
     supplier !== (t.supplier ?? '') ||
     req !== (t.req_number ?? '') ||
     paymentRef !== (t.payment_ref ?? '') ||
+    poBox !== (t.po_box ?? '') ||
     currency !== (t.currency ?? '') ||
     originalAmount !== (t.original_amount != null ? String(t.original_amount) : '') ||
     rate !== (t.exchange_rate != null ? String(t.exchange_rate) : '') ||
@@ -111,6 +114,9 @@ export function EditTransactionDialog({
       p_supplier_country: t.supplier_country ?? null,
       p_req_number: req.trim() || null,
       p_payment_ref: paymentRef.trim() || null,
+      // Sent even when empty, unlike the fields above: an empty string tells
+      // the database to clear the PO Box, where null would mean 'unchanged'.
+      p_po_box: poBox.trim(),
       p_currency: currency || null,
       p_original_amount: originalAmount ? Number(originalAmount) : null,
       p_exchange_rate: rate ? Number(rate) : null,
@@ -167,6 +173,14 @@ export function EditTransactionDialog({
             </Field>
             <Field label="Payment reference">
               <input value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} className={fieldClass} />
+            </Field>
+            <Field label="PO Box">
+              <input
+                value={poBox}
+                onChange={(e) => setPoBox(e.target.value)}
+                className={fieldClass}
+                placeholder="e.g. P.O. Box 12345, Dubai"
+              />
             </Field>
             <Field label="Original currency">
               <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={fieldClass}>

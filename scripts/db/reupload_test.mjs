@@ -188,7 +188,10 @@ try {
     check('the exported workbook has a tab for this card', Boolean(mine), mine?.name ?? '—');
     check('and it is not the summary tab', mineIndex > 0, `tab ${mineIndex + 1}`);
 
-    const headerRow = mine.rows.findIndex((r) => r[0] === 'Card');
+    // Found by what the row contains, not by which column it starts in: the
+    // export has gained a leading 'Ledger ID' column since this was written,
+    // and pinning the header to column zero silently stopped finding it.
+    const headerRow = mine.rows.findIndex((r) => r.includes('Card') && r.includes('Date'));
     const headers = mine.rows[headerRow];
     const at = (name) => colLetter(headers.indexOf(name));
 

@@ -223,6 +223,7 @@ export async function loadLedger(
       lpo_number: (t.lpo_number as string) ?? undefined,
       invoice: (t.invoice as string) ?? undefined,
       payment_ref: (t.payment_ref as string) ?? undefined,
+      po_box: (t.po_box as string) ?? undefined,
       account: (t.account as string) ?? undefined,
       crm: (t.crm as string) ?? undefined,
       client: (t.client as string) ?? undefined,
@@ -378,6 +379,7 @@ export interface TransactionEdit {
   p_supplier_country?: string | null;
   p_req_number?: string | null;
   p_payment_ref?: string | null;
+  p_po_box?: string | null;
   p_currency?: string | null;
   p_original_amount?: number | null;
   p_exchange_rate?: number | null;

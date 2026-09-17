@@ -113,6 +113,8 @@ export interface Transaction {
   lpo_number?: string;
   invoice?: string;
   payment_ref?: string;
+  /** The supplier's PO Box, as free text: postal formats differ by country. */
+  po_box?: string;
   account?: string;
   crm?: string;
   client?: string;

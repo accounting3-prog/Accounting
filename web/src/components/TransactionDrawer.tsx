@@ -217,6 +217,7 @@ export function TransactionDrawer({
             </Row>
             {t.req_number && <Row label="Request number">{t.req_number}</Row>}
             {t.payment_ref && <Row label="Payment reference">{t.payment_ref}</Row>}
+            {t.po_box && <Row label="PO Box">{t.po_box}</Row>}
             {t.lpo_number && <Row label="LPO number">{t.lpo_number}</Row>}
             {t.invoice && <Row label="Invoice">{t.invoice}</Row>}
             {t.account && <Row label="Account">{t.account}</Row>}

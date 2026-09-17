@@ -18,6 +18,7 @@ export function searchHaystack(t: Transaction, cardName: string): string {
     t.supplier_raw,
     t.req_number,
     t.payment_ref,
+    t.po_box,
     t.invoice,
     t.lpo_number,
     t.crm,
