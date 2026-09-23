@@ -2,18 +2,29 @@ import { Link } from 'react-router-dom';
 import { Page } from '../components/Layout';
 import { Button, Money, Panel, Tag } from '../components/ui';
 import { formatCount, formatDate } from '../lib/format';
-import { getCards, getSpendByCurrency } from '../lib/ledger';
+import { getCards, getSpendByCurrency, isBankAccount } from '../lib/ledger';
 
-export function Cards() {
-  const cards = getCards();
+/**
+ * The payment cards, and the bank accounts, as two screens over one list.
+ *
+ * They are the same kind of thing to the ledger — an account with an opening
+ * balance and a statement — and are listed by the same component so a change
+ * to one cannot quietly fail to reach the other. Only what is shown differs.
+ */
+export function Cards({ banks = false }: { banks?: boolean } = {}) {
+  const cards = getCards().filter((c) => isBankAccount(c) === banks);
 
   return (
     <Page
-      title="Cards"
-      description="One account per sheet in the source workbook. Names are kept exactly as the workbook writes them."
+      title={banks ? 'Banks' : 'Cards'}
+      description={
+        banks
+          ? 'Bank accounts. Each is reconciled against the balance its own statement prints beside every transaction.'
+          : 'One account per sheet in the source workbook. Names are kept exactly as the workbook writes them.'
+      }
       actions={
         <Link to="/cards/new">
-          <Button variant="primary">Add a card</Button>
+          <Button variant="primary">{banks ? 'Add an account' : 'Add a card'}</Button>
         </Link>
       }
     >

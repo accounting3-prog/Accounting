@@ -49,6 +49,17 @@ export function getLedger(): LedgerData {
   return data;
 }
 
+/**
+ * A bank account rather than a payment card.
+ *
+ * Asked in one place so the answer cannot drift between screens. It is the
+ * account's recorded type, not its name: 'BANK KSA' happens to say so, but the
+ * next account added might not.
+ */
+export function isBankAccount(card: Card): boolean {
+  return card.cardType === 'bank_account';
+}
+
 export function getCards(): Card[] {
   return data.cards;
 }

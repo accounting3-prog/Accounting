@@ -46,7 +46,7 @@ async function loadSample(): Promise<LedgerData> {
 
 /** Supabase rows arrive with the database's own column names. */
 interface CardRow {
-  id: string; name: string; settlement_currency: string;
+  id: string; name: string; settlement_currency: string; card_type: string | null;
   opening_balance: string | number; opening_date: string | null;
   source_header_row: number | null; decreasing_column: string | null;
   decreasing_header: string | null; increasing_column: string | null;
@@ -82,6 +82,31 @@ function classify(error: { code?: string; message: string }): LoadFailure {
 }
 
 /**
+ * The columns the app actually reads, named rather than asked for with '*'.
+ *
+ * A full select carries 2,750 kB for the current ledger, of which search_text
+ * is 790 kB and dedup_key 293 kB — 39% of everything downloaded, on every
+ * load, for two columns nothing in the browser ever looks at. search_text is
+ * the concatenation of a dozen other fields, so every row was being sent
+ * twice, and the search runs over the individual fields anyway; dedup_key is a
+ * hash the database uses to refuse duplicates and the browser has no use for.
+ *
+ * Named explicitly so a column added to the table later is not silently added
+ * to every page load as well.
+ */
+const TXN_COLUMNS = [
+  'id', 'card_id', 'entry_type', 'status', 'review_reason', 'description',
+  'source_sheet', 'source_row', 'txn_date', 'source_date_raw',
+  'date_repaired', 'date_repair_note',
+  'supplier_raw', 'amount_aed', 'direction', 'included_in_source_balance',
+  'currency', 'original_amount', 'currency_raw',
+  'exchange_rate', 'exchange_rate_formula', 'normalized_exchange_rate',
+  'rate_review_note', 'occurrence',
+  'req_number', 'lpo_number', 'invoice', 'payment_ref', 'account', 'crm',
+  'client', 'sales_operation', 'event_end', 'notes', 'statement_balance',
+].join(',');
+
+/**
  * @param signedIn whether a session exists. Row Level Security grants reads to
  *   `authenticated` only, so a signed-out request succeeds and returns an empty
  *   array rather than failing. Reading that as "the ledger is empty" would be
@@ -114,19 +139,45 @@ export async function loadLedger(
     const HARD_CAP = 100_000; // a runaway guard, not an expected ceiling
     const txnRows: Record<string, unknown>[] = [];
     let truncated = false;
-    for (let from = 0; from < HARD_CAP; from += PAGE) {
-      const page = await supabase
+
+    // Bound once: the null check above has already been made, and a closure
+    // cannot see that it was.
+    const db = supabase;
+    const page = (from: number) =>
+      db
         .from('transactions')
-        .select('*')
+        .select(TXN_COLUMNS)
         .order('txn_date', { ascending: false })
         .order('id', { ascending: true }) // stable across pages
         .range(from, from + PAGE - 1);
-      if (page.error) {
-        return { data: await loadSample(), source: 'sample', failure: classify(page.error) };
+
+    // The first page also reports how many rows there are in total, so the
+    // rest can be asked for at once instead of one after another. Five pages
+    // fetched in sequence is five round trips end to end; asked together they
+    // cost one.
+    const first = await db
+      .from('transactions')
+      .select(TXN_COLUMNS, { count: 'exact' })
+      .order('txn_date', { ascending: false })
+      .order('id', { ascending: true })
+      .range(0, PAGE - 1);
+    if (first.error) {
+      return { data: await loadSample(), source: 'sample', failure: classify(first.error) };
+    }
+    txnRows.push(...((first.data ?? []) as unknown as Record<string, unknown>[]));
+
+    const total = Math.min(first.count ?? txnRows.length, HARD_CAP);
+    if ((first.count ?? 0) > HARD_CAP) truncated = true;
+    if (total > PAGE) {
+      const starts: number[] = [];
+      for (let from = PAGE; from < total; from += PAGE) starts.push(from);
+      const rest = await Promise.all(starts.map(page));
+      for (const r of rest) {
+        if (r.error) {
+          return { data: await loadSample(), source: 'sample', failure: classify(r.error) };
+        }
+        txnRows.push(...((r.data ?? []) as unknown as Record<string, unknown>[]));
       }
-      txnRows.push(...(page.data as Record<string, unknown>[]));
-      if (!page.data || page.data.length < PAGE) break;
-      if (from + PAGE >= HARD_CAP) truncated = true;
     }
 
     const txnRes = { data: txnRows, error: null };
@@ -160,6 +211,7 @@ export async function loadLedger(
         id: c.id,
         name: c.name,
         settlementCurrency: c.settlement_currency,
+        cardType: c.card_type ?? undefined,
         openingBalance: num(c.opening_balance),
         openingDate: c.opening_date,
         lastTransaction: b?.last_transaction ?? null,

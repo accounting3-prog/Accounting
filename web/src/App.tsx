@@ -52,6 +52,7 @@ export function App() {
             <Route path="import" element={<Import />} />
             <Route path="review" element={<ReviewQueue />} />
             <Route path="cards" element={<Cards />} />
+            <Route path="banks" element={<Cards banks />} />
             <Route path="cards/new" element={<AddCard />} />
             <Route path="checks" element={<Checks />} />
             <Route path="history" element={<History />} />

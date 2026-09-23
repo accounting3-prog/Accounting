@@ -902,6 +902,14 @@ export function supplierKey(name: string | undefined | null): string {
 
 export interface BuildOptions {
   dayFirst: boolean;
+  /**
+   * The account the rows are being imported into.
+   *
+   * Only used to decide things that are properties of the ACCOUNT rather than
+   * of the row — today, that a charge line on a bank account labels itself BAC.
+   * The direction columns are bound earlier, in analyseSheet.
+   */
+  card?: Card;
   /** Rows already in the ledger, used to spot a re-upload. */
   existing?: Transaction[];
   /** Only rows for this card are compared for duplicates. */
@@ -910,6 +918,36 @@ export interface BuildOptions {
 
 const cell = (row: string[], i: number | undefined): string =>
   i === undefined ? '' : String(row[i] ?? '').trim();
+
+/**
+ * A bank charge labels itself.
+ *
+ * Every transfer a bank makes is followed by its fee, and the fee is always
+ * classified the same way — so it is a fact of the row, not a decision anyone
+ * is making 900 times. Filtering on BAC to see what the bank cost is only
+ * possible if the label is actually there.
+ *
+ * Three limits, so this stays a reading of the row rather than an opinion:
+ * it applies only to a bank account, only when the row has no reference of its
+ * own, and only when the bank's OWN first line says the transaction is a
+ * charge. A transfer whose body happens to mention a fee is not a charge, and
+ * a charge someone has already given a request number keeps it.
+ *
+ * The leading C is optional because the source workbook contains rows whose
+ * first character was lost in a paste — HARGES, RANSFER, ADAD PAYMENT.
+ */
+const CHARGE_LINE = /^\s*c?harges(\s+and\s+fees)?\s*$/i;
+
+export function bankChargeReference(
+  narrative: string,
+  existing: string,
+  card: Card | undefined,
+): string {
+  if (existing.trim()) return existing;
+  if (card?.cardType !== 'bank_account') return existing;
+  const firstLine = String(narrative ?? '').split(/\r?\n/)[0] ?? '';
+  return CHARGE_LINE.test(firstLine) ? 'BAC' : existing;
+}
 
 export function buildRows(
   sheet: ParsedSheet,
@@ -1076,7 +1114,7 @@ export function buildRows(
       currency,
       originalAmount,
       rate: currency ? rate : null,
-      reqNumber: cell(row, mapping.req_number),
+      reqNumber: bankChargeReference(supplier, cell(row, mapping.req_number), options.card),
       paymentRef: cell(row, mapping.payment_ref),
       lpoNumber: cell(row, mapping.lpo_number),
       invoice: cell(row, mapping.invoice),

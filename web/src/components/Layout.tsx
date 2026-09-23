@@ -14,6 +14,7 @@ const NAV = [
   { to: '/transactions', label: 'Transactions' },
   { to: '/review', label: 'Review queue', badge: true },
   { to: '/cards', label: 'Cards' },
+  { to: '/banks', label: 'Banks' },
   { to: '/add', label: 'Add transaction' },
   { to: '/import', label: 'Import' },
   { to: '/checks', label: 'Checks' },

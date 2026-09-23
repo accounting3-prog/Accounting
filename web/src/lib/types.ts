@@ -27,6 +27,12 @@ export interface Card {
   /** The Excel sheet name, verbatim. Never reformatted for display. */
   name: string;
   settlementCurrency: string;
+  /**
+   * 'bank_account' for a bank, absent for the payment cards the ledger began
+   * with. A bank statement reconciles differently and belongs on its own
+   * screen, so the distinction is carried rather than guessed from the name.
+   */
+  cardType?: string;
   openingBalance: number;
   openingDate: string | null;
   lastTransaction: string | null;

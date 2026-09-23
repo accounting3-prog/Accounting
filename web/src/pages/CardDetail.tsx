@@ -26,6 +26,7 @@ import {
   getCard,
   getCardTransactions,
   getSpendByCurrency,
+  isBankAccount,
   reviewKind,
   round2,
 } from '../lib/ledger';
@@ -157,6 +158,9 @@ export function CardDetail() {
   }
 
   const transactions = getCardTransactions(card.id);
+  // A bank account carries no LPO number and never will, so the column is not
+  // shown rather than shown empty on every row.
+  const isBank = isBankAccount(card);
 
   // Searching within one card, over the same fields the main list searches, so
   // a 1,370-transaction account does not have to be filtered from elsewhere.
@@ -371,9 +375,11 @@ export function CardDetail() {
                           BAC — and with only an LPO column on show, every one
                           of them read as a dash. */}
                       <th className="px-4 py-2 font-medium">Request number</th>
-                      <th className="px-4 py-2 font-medium">LPO number</th>
+                      {!isBank && <th className="px-4 py-2 font-medium">LPO number</th>}
                       <th className="px-4 py-2 text-right font-medium">Original</th>
-                      <th className="px-4 py-2 text-right font-medium">AED</th>
+                      <th className="px-4 py-2 text-right font-medium">
+                        {card.settlementCurrency}
+                      </th>
                       <th className="px-4 py-2 font-medium">Status</th>
                     </tr>
                   </thead>
@@ -393,11 +399,15 @@ export function CardDetail() {
                         <td className="max-w-[150px] truncate px-4 py-2 text-ink-muted">
                           {t.req_number ?? '—'}
                         </td>
-                        <td className="max-w-[150px] truncate px-4 py-2 text-ink-muted">
-                          {t.lpo_number ?? '—'}
-                        </td>
+                        {!isBank && (
+                          <td className="max-w-[150px] truncate px-4 py-2 text-ink-muted">
+                            {t.lpo_number ?? '—'}
+                          </td>
+                        )}
                         <td className="whitespace-nowrap px-4 py-2 text-right text-ink-muted">
-                          {t.currency && t.currency !== 'AED' && t.original_amount != null ? (
+                          {t.currency &&
+                          t.currency !== card.settlementCurrency &&
+                          t.original_amount != null ? (
                             <>
                               <Money
                                 amount={t.original_amount}
@@ -448,7 +458,9 @@ export function CardDetail() {
                       <th className="px-4 py-2 font-medium">Currency</th>
                       <th className="px-4 py-2 text-right font-medium">Txns</th>
                       <th className="px-4 py-2 text-right font-medium">Original total</th>
-                      <th className="px-4 py-2 text-right font-medium">Settled AED</th>
+                      <th className="px-4 py-2 text-right font-medium">
+                        Settled {card.settlementCurrency}
+                      </th>
                     </tr>
                   </thead>
                   <tbody>

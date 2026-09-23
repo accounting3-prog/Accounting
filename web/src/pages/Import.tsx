@@ -205,8 +205,10 @@ export function Import() {
 
   const rows: ImportRow[] = useMemo(() => {
     if (!sheet || headerRow < 0) return [];
-    return buildRows(sheet, headerRow, mapping, { dayFirst, existing, cardId });
-  }, [sheet, headerRow, mapping, dayFirst, existing, cardId]);
+    // The account goes in too: a charge line on a bank statement labels itself
+    // BAC, which is a property of the account and not of the row.
+    return buildRows(sheet, headerRow, mapping, { dayFirst, existing, cardId, card });
+  }, [sheet, headerRow, mapping, dayFirst, existing, cardId, card]);
 
   const updateRows: UpdateRow[] = useMemo(() => {
     if (mode !== 'update' || !sheet || headerRow < 0 || !cardId) return [];
