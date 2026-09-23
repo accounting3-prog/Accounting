@@ -897,9 +897,47 @@ try {
   await scenario(() =>
     expectRefused('a missing supplier', () =>
       addTxn(anyCard, { kind: 'purchase', amount: 100, supplier: '  ' })));
-  await scenario(() =>
-    expectRefused('a missing request number', () =>
-      addTxn(anyCard, { kind: 'purchase', amount: 100, req: '' })));
+  // A request number is optional since 030: a bank statement's rows carry none
+  // until someone attaches one, and 36 of the KSA account's 186 do not. What
+  // must hold instead is that the three things a null reference could quietly
+  // break do not break — each of which would corrupt data rather than raise.
+  await scenario(async () => {
+    const id = await addTxn(anyCard, { kind: 'purchase', amount: 100, req: '' });
+    const [row] = await q(
+      client,
+      'select req_number, occurrence::int from transactions where id = $1',
+      [id],
+    );
+    check('a row with no request number is accepted', Boolean(id));
+    // Stored as NULL, not '', or the "no request number" filter would never
+    // find the rows that most need one.
+    check('and its reference is null rather than an empty string',
+          row.req_number === null, JSON.stringify(row.req_number));
+
+    // The occurrence counter compares on the request number. With an
+    // uncoalesced null that comparison is NULL rather than true, so it would
+    // match nothing and every repeat would be numbered 1 — and the dedup key
+    // is built from that number, so two genuine repeats would collide.
+    //
+    // A genuine repeat has to be declared, so allowDuplicate is set here the
+    // same way the repeat-charge test above does it. Identical content in every
+    // field, including the absent reference.
+    const second = await addTxn(anyCard, {
+      kind: 'purchase', amount: 100, req: '', allowDuplicate: true,
+    });
+    const [row2] = await q(
+      client, 'select occurrence::int from transactions where id = $1', [second],
+    );
+    check('a declared repeat with no reference is numbered 2, not 1 again',
+          second !== id && row.occurrence === 1 && row2.occurrence === 2,
+          `first #${row.occurrence}, second #${row2.occurrence}`);
+
+    // The same content again must be recognised, not written twice — this is
+    // what stops a re-uploaded statement duplicating its unreferenced rows.
+    const again = await addTxn(anyCard, { kind: 'purchase', amount: 100, req: '' });
+    check('and uploading the identical row again returns the one already stored',
+          again === id, again === id ? '' : 'IT WAS WRITTEN TWICE');
+  });
   await scenario(() =>
     expectRefused('a currency with no original amount', () =>
       addTxn(anyCard, { kind: 'purchase', amount: 100, currency: 'EUR', rate: 4 })));

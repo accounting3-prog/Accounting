@@ -68,51 +68,65 @@ try {
     totalFunding: 0,
   });
 
-  const aedCards = rows.map(asCard);
+  const realCards = rows.map(asCard);
+  const present = [...new Set(realCards.map((c) => c.settlementCurrency))].sort();
 
-  /* ------------------------------------------- the ledger as it stands today */
+  /* --------------------------------------------- the ledger as it stands now */
 
-  setLedgerData({ cards: aedCards, transactions: [], currencySpend: [] });
+  setLedgerData({ cards: realCards, transactions: [], currencySpend: [] });
   const before = getTotals();
-  const aedBefore = before.byCurrency.find((c) => c.code === 'AED');
-  check('today every account settles in AED', before.byCurrency.length === 1,
-        before.byCurrency.map((c) => c.code).join(', '));
-  check('and its total is the sum of the real cards',
-        near(aedBefore.liveBalance, rows.reduce((a, r) => a + Number(r.ledger), 0)),
-        money(aedBefore.liveBalance));
+  console.log(`\n  live accounts: ${realCards.length} in ${present.join(', ')}\n`);
 
-  /* ------------------------------------------------- now a SAR bank joins it */
+  // The invariant, not a count of today's currencies: whatever currencies exist,
+  // each figure is the sum of ONLY that currency's accounts. An earlier version
+  // of this asserted "every account settles in AED", which was a fact about that
+  // afternoon rather than a rule, and it failed the moment the bank was added —
+  // for the one reason that should never fail a test: the thing it described
+  // changed, correctly.
+  for (const code of present) {
+    const expected = realCards
+      .filter((c) => c.settlementCurrency === code)
+      .reduce((a, c) => a + c.ledgerBalance, 0);
+    const got = before.byCurrency.find((c) => c.code === code);
+    check(`${code} is the sum of its own accounts and nothing else`,
+          got && near(got.liveBalance, expected), money(got?.liveBalance ?? NaN));
+  }
+  check('every currency present is reported, none merged away',
+        before.byCurrency.length === present.length,
+        before.byCurrency.map((c) => `${c.code} ${money(c.liveBalance)}`).join('  ·  '));
 
-  const SAR_BALANCE = 3_926_392.64; // the KSA account's closing balance
-  const withBank = [
-    ...aedCards,
-    {
-      ...asCard(
-        { name: 'SAB KSA — SASABB036677631001', settlement_currency: 'SAR',
-          ledger: SAR_BALANCE, source: SAR_BALANCE, diff: 0, n: 167 },
-        999,
-      ),
-    },
+  const baseline = Object.fromEntries(before.byCurrency.map((c) => [c.code, c.liveBalance]));
+
+  /* ------------------------------ a third currency arrives, in the same shape */
+
+  // Deliberately a currency no account uses, so this keeps working whatever is
+  // added to the ledger later.
+  const NEW_BALANCE = 3_926_392.64;
+  const withNew = [
+    ...realCards,
+    asCard({ name: 'A NEW ACCOUNT', settlement_currency: 'JPY',
+             ledger: NEW_BALANCE, source: NEW_BALANCE, diff: 0, n: 167 }, 999),
   ];
-  setLedgerData({ cards: withBank, transactions: [], currencySpend: [] });
+  setLedgerData({ cards: withNew, transactions: [], currencySpend: [] });
   const after = getTotals();
 
-  const aed = after.byCurrency.find((c) => c.code === 'AED');
-  const sar = after.byCurrency.find((c) => c.code === 'SAR');
+  const jpy = after.byCurrency.find((c) => c.code === 'JPY');
+  check('the new currency gets its own figure', Boolean(jpy) && near(jpy.liveBalance, NEW_BALANCE),
+        money(jpy?.liveBalance ?? NaN));
 
-  check('both currencies are reported', Boolean(aed && sar),
-        after.byCurrency.map((c) => `${c.code} ${money(c.liveBalance)}`).join('  ·  '));
+  // The point. Every figure that existed before must be untouched — if any of
+  // them moved, the new currency leaked into it.
+  for (const code of present) {
+    const got = after.byCurrency.find((c) => c.code === code);
+    check(`${code} did not move when a new currency appeared`,
+          near(got.liveBalance, baseline[code]),
+          `${money(baseline[code])} -> ${money(got.liveBalance)}`);
+  }
 
-  // The point. The AED figure must be exactly what it was before the SAR
-  // account existed — if it moved, riyals leaked into it.
-  check('the AED figure did not move when the SAR account appeared',
-        near(aed.liveBalance, aedBefore.liveBalance),
-        `${money(aedBefore.liveBalance)} -> ${money(aed.liveBalance)}`);
-  check('and the SAR figure is the bank alone', near(sar.liveBalance, SAR_BALANCE),
-        money(sar.liveBalance));
-
-  // The forbidden number, hunted for in every numeric field of the result.
-  const forbidden = aedBefore.liveBalance + SAR_BALANCE;
+  // The forbidden number, hunted for in every numeric field of the result:
+  // everything that already existed, added to the newcomer.
+  const forbidden =
+    Object.values(baseline).reduce((a, b) => a + b, 0) + NEW_BALANCE;
   const found = [];
   const walk = (value, path) => {
     if (typeof value === 'number') {
@@ -129,16 +143,16 @@ try {
 
   // Counts are not money and must still be whole-ledger.
   check('counts still cover every account',
-        after.cardCount === aedCards.length + 1 &&
+        after.cardCount === realCards.length + 1 &&
         after.transactionCount === before.transactionCount + 167,
         `${after.cardCount} accounts, ${after.transactionCount} transactions`);
 
   /* ----------------------------------- an account out of balance in each one */
 
-  const skewed = withBank.map((c, i) =>
+  const skewed = withNew.map((c, i) =>
     i === 0 ? { ...c, reconciliationDifference: 1000 }
-    : c.settlementCurrency === 'SAR' ? { ...c, reconciliationDifference: -1000 }
-    : c);
+    : c.settlementCurrency === 'JPY' ? { ...c, reconciliationDifference: -1000 }
+    : { ...c, reconciliationDifference: 0 });
   setLedgerData({ cards: skewed, transactions: [], currencySpend: [] });
   const skew = getTotals();
 
@@ -148,9 +162,10 @@ try {
         skew.cardsWithDifference.length === 2,
         `${skew.cardsWithDifference.length} flagged`);
   check('and neither difference cancelled the other',
-        near(skew.byCurrency.find((c) => c.code === 'AED').reconciliationDifference, 1000) &&
-        near(skew.byCurrency.find((c) => c.code === 'SAR').reconciliationDifference, -1000),
-        'AED +1,000.00 and SAR -1,000.00, kept apart');
+        near(skew.byCurrency.find((c) => c.code === realCards[0].settlementCurrency)
+               .reconciliationDifference, 1000) &&
+        near(skew.byCurrency.find((c) => c.code === 'JPY').reconciliationDifference, -1000),
+        `${realCards[0].settlementCurrency} +1,000.00 and JPY -1,000.00, kept apart`);
 } finally {
   await client.end();
 }
