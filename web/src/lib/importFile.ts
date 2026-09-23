@@ -259,7 +259,15 @@ export type FieldKey =
   | 'client'
   | 'sales_operation'
   | 'notes'
-  | 'ledger_id';
+  | 'ledger_id'
+  // A bank statement does not split debit and credit into two columns. It puts
+  // one unsigned amount in one column and says which way it went in another.
+  | 'amount_abs'
+  | 'txn_type'
+  // The running balance the statement printed beside the row. Stored, because
+  // it is the only independent witness a bank account has: the ledger's own
+  // arithmetic agrees with itself whether or not a transaction is missing.
+  | 'statement_balance';
 
 export const FIELD_LABELS: Record<FieldKey, string> = {
   date: 'Date',
@@ -280,6 +288,9 @@ export const FIELD_LABELS: Record<FieldKey, string> = {
   sales_operation: 'Sales operation',
   notes: 'Notes',
   ledger_id: 'Ledger ID',
+  amount_abs: 'Amount — the type column says which way',
+  txn_type: 'Debit or Credit',
+  statement_balance: 'Balance printed on the statement',
 };
 
 /**
@@ -293,7 +304,13 @@ const ALIASES: { field: FieldKey; patterns: RegExp[] }[] = [
   { field: 'date', patterns: [/^transaction\s*date$/i, /^date$/i, /^txn\s*date$/i, /^value\s*date$/i] },
   {
     field: 'supplier',
-    patterns: [/^details?$/i, /^supplier\s*name$/i, /^supplier$/i, /^description$/i, /^narration$/i, /^merchant$/i],
+    patterns: [
+      /^details?$/i, /^supplier\s*name$/i, /^supplier$/i, /^description$/i,
+      /^narration$/i, /^merchant$/i,
+      // The SAB statement's word, and the misspelling the reconciliation
+      // workbook has carried in its own header since November.
+      /^transaction\s*particulars?$/i, /^describtion$/i,
+    ],
   },
   { field: 'currency', patterns: [/^original\s*currency$/i, /^currency$/i, /^ccy$/i, /^fx\s*currency$/i] },
   { field: 'original_amount', patterns: [/^amount$/i, /^original\s*amount$/i, /^foreign\s*amount$/i] },
@@ -318,6 +335,13 @@ const ALIASES: { field: FieldKey; patterns: RegExp[] }[] = [
   { field: 'client', patterns: [/^client$/i] },
   { field: 'sales_operation', patterns: [/^sales\s*operation$/i] },
   { field: 'notes', patterns: [/^notes?$/i, /^debit\s*notes$/i, /^comments?$/i, /^remarks?$/i, /^commissionable.*$/i] },
+  // The SAB statement's own words. 'Transaction Amount' is one unsigned figure
+  // and 'Transaction Type' holds Debit or Credit — a different shape from the
+  // two-column sheets, so it needs its own pair of fields.
+  { field: 'amount_abs', patterns: [/^transaction\s*amount$/i] },
+  { field: 'txn_type', patterns: [/^transaction\s*type$/i, /^dr\s*\/?\s*cr$/i] },
+  // statement_balance is not listed here: BALANCE_RE claims any balance column
+  // before the aliases are consulted, and it is mapped there.
   { field: 'ledger_id', patterns: [/^ledger\s*id$/i, /^transaction\s*id$/i, /^id$/i] },
   {
     field: 'signed_amount',
@@ -336,6 +360,12 @@ const HEADER_HINTS = [
   /\bdate\b/i, /\bdetails?\b/i, /\bsupplier\b/i, /\bdebit\b/i, /\bcredit\b/i,
   /\bbalance\b/i, /\bcurrency\b/i, /\bdescription\b/i, /\bamount\b/i,
   /\breq/i, /\blpo\b/i, /\binvoice\b/i, /\bpayment\b/i, /\bconversion\b/i,
+  // A bank statement carries sixteen rows of account details above its real
+  // header, and some of them contain the word 'balance' or 'currency'. These
+  // are words only the header row has, so the header wins on score rather than
+  // on position.
+  /\bsr\.?\s*no\b/i, /\bparticulars?\b/i, /\btransaction\s*type\b/i,
+  /\bvalue\s*date\b/i, /\bnarration\b/i,
 ];
 
 /**
@@ -427,6 +457,11 @@ export function mapColumns(headers: string[]): MappingResult {
     if (!h) return;
     if (BALANCE_RE.test(h)) {
       balanceColumns.push(i);
+      // The running balance is not a transaction figure and is never imported
+      // as one — but it is the only independent check a statement offers, so
+      // it is kept against the row it belongs to. First balance column wins,
+      // the same rule the rest of this function uses.
+      if (mapping.statement_balance === undefined) mapping.statement_balance = i;
       return;
     }
     if (DEBIT_RE.test(h) && !/notes?/i.test(h)) {
@@ -754,6 +789,14 @@ export interface ImportRow {
   client: string;
   salesOperation: string;
   notes: string;
+  /**
+   * The running balance the source printed beside this row, if it printed one.
+   *
+   * Kept so the ledger has something to be checked AGAINST. Its own arithmetic
+   * — opening plus the rows it holds — reaches the same answer whether or not
+   * a transaction is missing, so it cannot detect its own gaps.
+   */
+  statementBalance: number | null;
   /** Stops the import for this row. */
   errors: string[];
   /** Imported anyway, but the reviewer should see it. */
@@ -808,8 +851,49 @@ function moneyInKind(supplier: string, notes: string): RowKind {
  * it decides what to WARN about, never what to merge, so being slightly too
  * eager costs a reviewer one glance and being too strict costs money.
  */
+/**
+ * Lines a bank prints that describe the statement rather than the transaction.
+ *
+ * They are the difference between the same charge as the bank exports it today
+ * and as it was exported into a working copy last week, and they are why 44 of
+ * one statement's 167 rows failed to be recognised as rows already held.
+ */
+const STATEMENT_NOISE = [
+  /^value date\s*:/i,
+  /^incoming instant payment$/i,
+  /^system generated$/i,
+  /^sab icorp$/i,
+];
+
 export function supplierKey(name: string | undefined | null): string {
-  return String(name ?? '')
+  const raw = String(name ?? '');
+
+  // A bank narrative rather than a merchant name: many lines, most of them
+  // detail, and not every export carries the same ones.
+  //
+  // Which part identifies it was measured against the real statement and the
+  // real ledger, not chosen. Matching on the whole text recognised 123 of 167
+  // rows; on the first line alone, 167 — but with 16 collisions, meaning it
+  // would have merged transactions that are not the same. The bank's own
+  // voucher reference recognised 164 with no collisions, and falling back to
+  // the narrative minus the noise lines above covers the rest: 167 of 167,
+  // nothing merged.
+  if (raw.includes('\n')) {
+    const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const voucher = [...lines].reverse().find((l) => /^[A-Z]{3,5}\d{4,6}$/.test(l));
+    // The voucher alone is not unique — a transfer and its charge share one —
+    // but the caller always pairs this with the date and the amount, and those
+    // three together collide on nothing in the statement.
+    if (voucher) return `voucher:${voucher.toLowerCase()}`;
+    return lines
+      .filter((l) => !STATEMENT_NOISE.some((re) => re.test(l)))
+      .join(' ')
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  return raw
     .replace(/\s+\d{3}\s*$/, '')   // the country code the ledger splits off
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim()
@@ -892,6 +976,34 @@ export function buildRows(
         signed < 0
           ? 'purchase'
           : moneyInKind(cell(row, mapping.supplier), cell(row, mapping.notes));
+    } else if (mapping.amount_abs !== undefined) {
+      // A bank statement's shape: one unsigned amount, and a word beside it.
+      //
+      // The word is read, not guessed — but which way it points was settled by
+      // arithmetic, not by the word itself. Walking the SAB statement's own
+      // running balance across all 167 rows of a fortnight: a Debit lowers the
+      // printed balance and a Credit raises it, with no break in the chain.
+      // That is the same test every card's direction was settled by, and it is
+      // why an unrecognised word is refused rather than assumed.
+      const amount = parseAmount(cell(row, mapping.amount_abs));
+      const typeWord = cell(row, mapping.txn_type).trim();
+      if (amount !== null && amount !== 0) {
+        if (/^d(e?b(it)?)?r?$/i.test(typeWord) || /^debit$/i.test(typeWord)) {
+          amountAed = Math.abs(amount);
+          kind = 'purchase';
+        } else if (/^c(re?d(it)?)?r?$/i.test(typeWord) || /^credit$/i.test(typeWord)) {
+          amountAed = Math.abs(amount);
+          kind = moneyInKind(cell(row, mapping.supplier), cell(row, mapping.notes));
+        } else if (typeWord === '') {
+          errors.push(
+            'This row has an amount but the column saying whether it is a debit or a credit is empty.',
+          );
+        } else {
+          errors.push(
+            `"${typeWord}" is not Debit or Credit, so which way this amount moved the balance is unknown.`,
+          );
+        }
+      }
     }
 
     const supplier = cell(row, mapping.supplier);
@@ -972,6 +1084,7 @@ export function buildRows(
       client: cell(row, mapping.client),
       salesOperation: cell(row, mapping.sales_operation),
       notes: [cell(row, mapping.notes), carriedNote].filter(Boolean).join(' — '),
+      statementBalance: parseAmount(cell(row, mapping.statement_balance)),
       errors,
       warnings,
     };

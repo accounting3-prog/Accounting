@@ -281,6 +281,17 @@ export interface NewTransaction {
   p_description?: string | null;
   p_notes?: string | null;
   p_needs_review?: boolean;
+  /**
+   * The running balance the source printed beside the row, and where the row
+   * came from. A bank account has no workbook formula to re-derive, so the
+   * printed balance is the only thing its ledger can be checked against; the
+   * sheet and row are what let rows sharing a date keep the order the source
+   * put them in, which created_at cannot do because it is one value for a
+   * whole import.
+   */
+  p_statement_balance?: number | null;
+  p_source_sheet?: string | null;
+  p_source_row?: number | null;
   /** Why, in the caller's words. Defaults to the manual-entry sentence. */
   p_review_reason?: string | null;
   /**

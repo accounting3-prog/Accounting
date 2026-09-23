@@ -361,11 +361,16 @@ export function CardDetail() {
               />
             ) : (
               <div className="scroll-x">
-                <table className="w-full min-w-[780px] border-collapse text-[13px]">
+                <table className="w-full min-w-[920px] border-collapse text-[13px]">
                   <thead>
                     <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-ink-faint">
                       <th className="px-4 py-2 font-medium">Date</th>
                       <th className="px-4 py-2 font-medium">Supplier</th>
+                      {/* The reference people actually search on. On the bank
+                          account 1,831 of 2,431 rows carry one — KSAML2533,
+                          BAC — and with only an LPO column on show, every one
+                          of them read as a dash. */}
+                      <th className="px-4 py-2 font-medium">Request number</th>
                       <th className="px-4 py-2 font-medium">LPO number</th>
                       <th className="px-4 py-2 text-right font-medium">Original</th>
                       <th className="px-4 py-2 text-right font-medium">AED</th>
@@ -384,6 +389,9 @@ export function CardDetail() {
                         </td>
                         <td className="max-w-[200px] truncate px-4 py-2">
                           {t.supplier ?? t.description ?? '—'}
+                        </td>
+                        <td className="max-w-[150px] truncate px-4 py-2 text-ink-muted">
+                          {t.req_number ?? '—'}
                         </td>
                         <td className="max-w-[150px] truncate px-4 py-2 text-ink-muted">
                           {t.lpo_number ?? '—'}

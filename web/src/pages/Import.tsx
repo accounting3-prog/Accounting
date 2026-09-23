@@ -327,6 +327,9 @@ export function Import() {
         // importer ever flagged and taught people the queue was noise.
         p_needs_review: row.warnings.length > 0,
         p_review_reason: row.warnings.join(' ') || null,
+        p_statement_balance: row.statementBalance,
+        p_source_sheet: sheet ? `${sheet.name} (${fileName ?? 'uploaded file'})` : null,
+        p_source_row: row.sourceRow,
         // Two different reasons to bypass the database's two-minute
         // double-submit guard, and both are deliberate.
         //
