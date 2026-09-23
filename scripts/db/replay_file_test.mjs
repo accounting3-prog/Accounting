@@ -198,11 +198,46 @@ try {
     'select ledger_balance::text from card_balances where card_id = $1',
     [card.id],
   );
-  check(
-    `the ledger lands on the balance the sheet computed`,
-    Math.abs(Number(endBal) - EXPECTED) < 0.005,
-    `ledger ${money(endBal)}, sheet ${money(EXPECTED)}, out by ${money(Number(endBal) - EXPECTED)}`,
+  // What the file should have moved the balance by: every row it wrote, signed.
+  //
+  // This used to compare against 838,390.25 — the figure the sheet's own
+  // formulas reached on the day the file was made. That was a fact about that
+  // afternoon, not a rule: the card has taken on other transactions since, so
+  // the replay starts somewhere else and can never land on it again. The test
+  // failed for the one reason a test should not, which is that the world moved
+  // on correctly.
+  //
+  // The invariant underneath it is the one that catches the bug this test was
+  // written for: five rows once vanished while every one of them was reported
+  // to the browser as a success. If a row goes missing, the balance moves by
+  // less than the rows say it should.
+  const movedBy = Number(endBal) - Number(startBal);
+  const shouldMoveBy = wrote.reduce(
+    (a, o) => a + (o.row.kind === 'purchase' || o.row.kind === 'fee'
+      ? -Math.abs(o.row.amountAed) : Math.abs(o.row.amountAed)),
+    0,
   );
+  check(
+    'the balance moved by exactly the rows that were written',
+    Math.abs(movedBy - shouldMoveBy) < 0.005,
+    `${money(startBal)} -> ${money(endBal)}, moved ${money(movedBy)}, rows say ${money(shouldMoveBy)}`,
+  );
+
+  // Kept, but only where it can still mean something: if the card began where
+  // the sheet began, the sheet's own computed closing balance is reachable and
+  // is a second, independent witness.
+  if (Math.abs(Number(startBal) - (EXPECTED - shouldMoveBy)) < 0.005) {
+    check(
+      'and lands on the balance the sheet itself computed',
+      Math.abs(Number(endBal) - EXPECTED) < 0.005,
+      `ledger ${money(endBal)}, sheet ${money(EXPECTED)}`,
+    );
+  } else {
+    console.log(
+      `  (the sheet's own closing figure of ${money(EXPECTED)} is not reachable from ` +
+      `${money(startBal)} — the card has moved on since the file was made)`,
+    );
+  }
 
   /* ------------------------------------- 2. the same file, uploaded again */
 

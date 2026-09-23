@@ -580,7 +580,34 @@ interface TemplateColumn {
   width: number;
 }
 
+/**
+ * The blank sheet for an account that records payments rather than a balance.
+ *
+ * Deliberately not the card shape. There is no DEBIT and CREDIT pair because
+ * every row is money going out; no BALANCE column, because the account holds
+ * none and a column that could be filled in would invite someone to; and no
+ * CONVERSION column, because the rate is the two amounts divided and asking
+ * for it again is asking for a third figure that can disagree with them.
+ *
+ * The headers are the ones the bank's own export uses, so a file downloaded
+ * from NBD and this sheet are read the same way by the importer.
+ */
+export function paymentTemplateColumns(): TemplateColumn[] {
+  return [
+    { header: 'Payment Date', width: 16 },
+    { header: 'Beneficiary Name', width: 38 },
+    { header: 'Payment Currency', width: 18 },
+    { header: 'Payment Amount', width: 16 },
+    { header: 'Customer Reference', width: 20 },
+    { header: 'Local Currency', width: 16 },
+    { header: 'Amount in Local Currency', width: 24 },
+  ];
+}
+
 export function cardTemplateColumns(card: Card): TemplateColumn[] {
+  // An account that holds no balance gets the payments sheet instead.
+  if (card.tracksBalance === false) return paymentTemplateColumns();
+
   const spend = card.decreasingHeader.trim() || 'DEBIT';
   const received = card.increasingHeader.trim() || 'CREDIT';
   // In the sheet's own order, so the file looks like the statement it mirrors.
@@ -611,6 +638,41 @@ export function cardTemplateColumns(card: Card): TemplateColumn[] {
 export function buildCardTemplate(card: Card, blankRows = TEMPLATE_BLANK_ROWS): Uint8Array {
   const columns = cardTemplateColumns(card);
   const letter = (i: number) => colName(i);
+
+  // An account that holds no balance gets a sheet with no balance in it: no
+  // brought-forward line and no running formula, because there is nothing for
+  // either to be. Everything else about the file is the same, so it is read by
+  // the same importer.
+  if (card.tracksBalance === false) {
+    const rows: Cell[][] = [
+      [`${card.name} — blank sheet for new payments`],
+      [
+        'One payment per row. Put the amount in the currency it was actually paid in, ' +
+          'and its cost in dirhams in the last column. This account holds no balance, ' +
+          'so there is nothing to carry forward and nothing to reconcile.',
+      ],
+      [
+        'Write dates as DD-MM-YYYY. The request number is what you will search on later, ' +
+          'so every row should carry one. Upload the file on the Import page.',
+      ],
+      columns.map((c) => c.header as Cell),
+    ];
+    for (let n = 0; n < blankRows; n++) {
+      const row = columns.map(() => null as Cell);
+      // The one thing that is always the same, filled in so it is not retyped
+      // two hundred times and not left blank to be guessed at.
+      row[5] = card.settlementCurrency;
+      rows.push(row);
+    }
+    return buildXlsxWorkbook([
+      {
+        name: safeSheetName(card.name, new Set<string>()),
+        rows,
+        headerRowIndex: 3,
+        widths: columns.map((c) => c.width),
+      },
+    ]);
+  }
 
   const spendHeader = card.decreasingHeader.trim() || 'DEBIT';
   const iSpend = columns.findIndex((c) => c.header === spendHeader);
@@ -701,6 +763,20 @@ export async function exportCardTemplate(
   confirmBalance: (cardId: string) =>
     Promise<{ ok: true; ledgerBalance: number } | { ok: false; error: string }>,
 ): Promise<{ ok: true; name: string; balance: number; wasStale: boolean } | { ok: false; error: string }> {
+  // An account with no balance has nothing to confirm, and asking would return
+  // the negative of everything ever paid through it — a real number that is
+  // not a balance. The sheet does not state one, so none is read.
+  if (card.tracksBalance === false) {
+    const safeName = card.name.replace(/[\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+    const fileName = `${safeName} — blank sheet.xlsx`;
+    downloadBlob(
+      buildCardTemplate(card),
+      fileName,
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    return { ok: true, name: fileName, balance: 0, wasStale: false };
+  }
+
   const live = await confirmBalance(card.id);
   if (!live.ok) return live;
 

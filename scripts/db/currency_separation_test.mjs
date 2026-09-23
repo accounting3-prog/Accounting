@@ -44,7 +44,7 @@ try {
 
   const rows = await q(
     client,
-    `select c.name, c.settlement_currency,
+    `select c.name, c.settlement_currency, c.tracks_balance,
             b.ledger_balance::float8 ledger, b.source_balance::float8 source,
             b.reconciliation_difference::float8 diff, b.transaction_count::int n
        from card_balances b join cards c on c.id = b.card_id
@@ -55,6 +55,7 @@ try {
     id: `card-${i}`,
     name: r.name,
     settlementCurrency: r.settlement_currency,
+    tracksBalance: r.tracks_balance !== false,
     ledgerBalance: Number(r.ledger),
     sourceBalance: Number(r.source),
     reconciliationDifference: Number(r.diff),
@@ -69,7 +70,9 @@ try {
   });
 
   const realCards = rows.map(asCard);
-  const present = [...new Set(realCards.map((c) => c.settlementCurrency))].sort();
+  const present = [
+    ...new Set(realCards.filter((c) => c.tracksBalance).map((c) => c.settlementCurrency)),
+  ].sort();
 
   /* --------------------------------------------- the ledger as it stands now */
 
@@ -85,7 +88,7 @@ try {
   // changed, correctly.
   for (const code of present) {
     const expected = realCards
-      .filter((c) => c.settlementCurrency === code)
+      .filter((c) => c.tracksBalance && c.settlementCurrency === code)
       .reduce((a, c) => a + c.ledgerBalance, 0);
     const got = before.byCurrency.find((c) => c.code === code);
     check(`${code} is the sum of its own accounts and nothing else`,
@@ -97,6 +100,37 @@ try {
 
   const baseline = Object.fromEntries(before.byCurrency.map((c) => [c.code, c.liveBalance]));
 
+  /* ------------------- an account that records payments rather than a balance */
+
+  // NBD settles in AED and holds 222 payments, so its ledgerBalance is the
+  // negative of everything ever paid through it. That is a real number and it
+  // is not money the business holds; if it reached the AED figure, the first
+  // number on the dashboard would be out by millions.
+  const noBalance = realCards.filter((c) => !c.tracksBalance);
+  if (noBalance.length) {
+    const leaked = noBalance.reduce((a, c) => a + c.ledgerBalance, 0);
+    console.log(`
+  ${noBalance.length} account(s) hold no balance, worth ${money(leaked)} if counted
+`);
+    check('an account that tracks no balance is left out of the totals',
+          !near(baseline[noBalance[0].settlementCurrency] ?? 0,
+                (baseline[noBalance[0].settlementCurrency] ?? 0) + leaked),
+          `${noBalance.map((c) => c.name).join(', ')}`);
+    // Directly: put it in by hand and the figure must move, proving the
+    // exclusion is doing the work rather than the number happening to be zero.
+    setLedgerData({
+      cards: realCards.map((c) => ({ ...c, tracksBalance: true })),
+      transactions: [], currencySpend: [],
+    });
+    const counted = getTotals().byCurrency.find(
+      (c) => c.code === noBalance[0].settlementCurrency,
+    );
+    check('and counting it would have changed that figure',
+          !near(counted.liveBalance, baseline[noBalance[0].settlementCurrency]),
+          `${money(baseline[noBalance[0].settlementCurrency])} -> ${money(counted.liveBalance)} if counted`);
+    setLedgerData({ cards: realCards, transactions: [], currencySpend: [] });
+  }
+
   /* ------------------------------ a third currency arrives, in the same shape */
 
   // Deliberately a currency no account uses, so this keeps working whatever is
@@ -104,7 +138,7 @@ try {
   const NEW_BALANCE = 3_926_392.64;
   const withNew = [
     ...realCards,
-    asCard({ name: 'A NEW ACCOUNT', settlement_currency: 'JPY',
+    asCard({ name: 'A NEW ACCOUNT', settlement_currency: 'JPY', tracks_balance: true,
              ledger: NEW_BALANCE, source: NEW_BALANCE, diff: 0, n: 167 }, 999),
   ];
   setLedgerData({ cards: withNew, transactions: [], currencySpend: [] });

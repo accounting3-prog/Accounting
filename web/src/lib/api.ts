@@ -47,6 +47,7 @@ async function loadSample(): Promise<LedgerData> {
 /** Supabase rows arrive with the database's own column names. */
 interface CardRow {
   id: string; name: string; settlement_currency: string; card_type: string | null;
+  tracks_balance: boolean | null;
   opening_balance: string | number; opening_date: string | null;
   source_header_row: number | null; decreasing_column: string | null;
   decreasing_header: string | null; increasing_column: string | null;
@@ -212,6 +213,8 @@ export async function loadLedger(
         name: c.name,
         settlementCurrency: c.settlement_currency,
         cardType: c.card_type ?? undefined,
+        // Absent on a row from the bundled sample, which predates the column.
+        tracksBalance: c.tracks_balance !== false,
         openingBalance: num(c.opening_balance),
         openingDate: c.opening_date,
         lastTransaction: b?.last_transaction ?? null,

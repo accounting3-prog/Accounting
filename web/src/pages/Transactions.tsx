@@ -81,6 +81,9 @@ function SortHeader({
 
 export function Transactions() {
   const cards = getCards();
+  // Looked up once rather than searched per row: the list renders 50 rows at a
+  // time over eight accounts, and each row needs its account's currency.
+  const cardsById = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
   const all = getTransactions();
 
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
@@ -390,7 +393,11 @@ export function Transactions() {
                     <SortHeader label="Supplier" sortKey="supplier" active={sortKey === 'supplier'} dir={sortDir} onSort={onSort} />
                     <SortHeader label="Card" sortKey="card" active={sortKey === 'card'} dir={sortDir} onSort={onSort} />
                     <th className="px-3 py-2 text-right font-medium">Original</th>
-                    <SortHeader label="AED" sortKey="amount" active={sortKey === 'amount'} dir={sortDir} onSort={onSort} align="right" />
+                    {/* Not 'AED'. The list mixes accounts that settle in
+                        different currencies, and a fixed heading labelled every
+                        SAR row a dirham. The code goes on the row, beside the
+                        figure it belongs to. */}
+                    <SortHeader label="Amount" sortKey="amount" active={sortKey === 'amount'} dir={sortDir} onSort={onSort} align="right" />
                     <th className="px-3 py-2 text-left font-medium">Type</th>
                     <th className="px-3 py-2 text-left font-medium">Request no.</th>
                     <th className="px-3 py-2 text-left font-medium">Payment ref.</th>
@@ -446,7 +453,14 @@ export function Transactions() {
                           )}
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-right font-medium">
-                          <Money amount={t.amount_aed} signed tone="ledger" code={false} />
+                          <Money amount={t.amount_aed} signed tone="ledger" code={false} />{' '}
+                          {/* The settlement currency of the account this row
+                              belongs to, not a heading over the whole column.
+                              The list mixes AED cards with a SAR bank, and one
+                              heading cannot be true of both. */}
+                          <span className="text-xs font-normal text-ink-faint">
+                            {cardsById.get(t.cardId)?.settlementCurrency ?? 'AED'}
+                          </span>
                         </td>
                         <td className="px-3 py-2">
                           {t.entry_type === 'reconciliation_adjustment' ? (

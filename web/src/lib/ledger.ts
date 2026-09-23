@@ -145,6 +145,12 @@ export function getTotals(): LedgerTotals {
 
   const groups = new Map<string, Card[]>();
   for (const c of cards) {
+    // An account that tracks no balance contributes none. NBD settles in AED
+    // and holds 222 payments, so its "balance" is -13,674,062.24 — the total
+    // ever paid through it, which is not money the business holds and must not
+    // be added to the money it does. Its transactions still count everywhere
+    // a transaction is counted; it is the balance that does not exist.
+    if (c.tracksBalance === false) continue;
     const code = c.settlementCurrency || 'AED';
     if (!groups.has(code)) groups.set(code, []);
     groups.get(code)!.push(c);
@@ -171,7 +177,7 @@ export function getTotals(): LedgerTotals {
     needsReview: sum((c) => c.needsReview),
     excluded: sum((c) => c.excluded),
     cardsWithDifference: cards.filter(
-      (c) => Math.abs(c.reconciliationDifference) > 0.005,
+      (c) => c.tracksBalance !== false && Math.abs(c.reconciliationDifference) > 0.005,
     ),
   };
 }

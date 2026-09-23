@@ -33,6 +33,13 @@ export interface Card {
    * screen, so the distinction is carried rather than guessed from the name.
    */
   cardType?: string;
+  /**
+   * False for an account that records payments rather than holding a balance.
+   * Its ledgerBalance is arithmetically real — opening plus its rows — and
+   * means nothing: for a payment rail it is simply the negative of everything
+   * ever paid. Such an account is left out of every balance total.
+   */
+  tracksBalance?: boolean;
   openingBalance: number;
   openingDate: string | null;
   lastTransaction: string | null;

@@ -377,9 +377,7 @@ export function CardDetail() {
                       <th className="px-4 py-2 font-medium">Request number</th>
                       {!isBank && <th className="px-4 py-2 font-medium">LPO number</th>}
                       <th className="px-4 py-2 text-right font-medium">Original</th>
-                      <th className="px-4 py-2 text-right font-medium">
-                        {card.settlementCurrency}
-                      </th>
+                      <th className="px-4 py-2 text-right font-medium">Amount</th>
                       <th className="px-4 py-2 font-medium">Status</th>
                     </tr>
                   </thead>
@@ -421,7 +419,10 @@ export function CardDetail() {
                           )}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-right font-medium">
-                          <Money amount={t.amount_aed} signed tone="ledger" code={false} />
+                          <Money amount={t.amount_aed} signed tone="ledger" code={false} />{' '}
+                          <span className="text-xs font-normal text-ink-faint">
+                            {card.settlementCurrency}
+                          </span>
                         </td>
                         <td className="px-4 py-2">
                           <StatusPill status={t.status} />
