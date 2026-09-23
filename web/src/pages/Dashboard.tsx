@@ -32,7 +32,10 @@ function Headline() {
   const cards = getCards();
   const lastActivity = cards.map((c) => c.lastTransaction).filter(Boolean).sort().at(-1);
   const open = totals.needsReview + totals.excluded;
-  const hasDifference = Math.abs(totals.reconciliationDifference) > 0.005;
+  // Whether anything is unreconciled is a count, not a sum. Adding the
+  // differences together would mean adding currencies, and two accounts out by
+  // opposite amounts in different currencies would cancel to a reassuring zero.
+  const hasDifference = totals.cardsWithDifference.length > 0;
   const negative = cards.filter((c) => c.ledgerBalance < 0);
 
   return (
@@ -40,16 +43,24 @@ function Headline() {
       <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4 px-5 py-5">
         <div>
           <div className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-            Total across {totals.cardCount} cards
+            {totals.byCurrency.length > 1
+              ? `${totals.cardCount} accounts, by currency`
+              : `Total across ${totals.cardCount} accounts`}
           </div>
-          <div className="mt-1 flex flex-wrap items-baseline gap-x-2.5">
-            <span className="tnum text-[2rem] leading-none font-semibold tracking-tight text-ink">
-              {totals.liveBalance.toLocaleString('en-US', {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
-            </span>
-            <span className="text-sm font-medium text-ink-muted">AED</span>
+          {/* One figure per currency, side by side, never added together. With
+              a single currency this reads exactly as it always has. */}
+          <div className="mt-1 flex flex-wrap items-baseline gap-x-5 gap-y-1">
+            {totals.byCurrency.map((c) => (
+              <span key={c.code} className="flex items-baseline gap-x-2">
+                <span className="tnum text-[2rem] leading-none font-semibold tracking-tight text-ink">
+                  {c.liveBalance.toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
+                <span className="text-sm font-medium text-ink-muted">{c.code}</span>
+              </span>
+            ))}
           </div>
           <p className="mt-1.5 text-[13px] text-ink-muted">
             {formatCount(totals.transactionCount)} transactions · latest{' '}
@@ -61,10 +72,10 @@ function Headline() {
           {hasDifference ? (
             <span className="text-negative">
               <span className="font-medium">
-                <Money amount={totals.reconciliationDifference} />
+                {totals.cardsWithDifference.length}
               </span>{' '}
-              unreconciled on {totals.cardsWithDifference.length}{' '}
-              {totals.cardsWithDifference.length === 1 ? 'card' : 'cards'}
+              {totals.cardsWithDifference.length === 1 ? 'account' : 'accounts'}{' '}
+              disagree with their statement
             </span>
           ) : (
             <span className="flex items-center gap-1.5 text-ink-muted">
@@ -285,17 +296,27 @@ export function Dashboard() {
                   </tr>
                 ))}
               </tbody>
+              {/* A total line per currency. The accounts stay in one list —
+                  they are all accounts — but their money is only ever added up
+                  with money of the same kind. */}
               <tfoot>
-                <tr className="border-t-2 border-line-strong bg-sunken font-medium">
-                  <td className="px-4 py-2.5">Total, AED</td>
-                  <td className="px-4 py-2.5 text-right text-ink-muted">
-                    <Money amount={totals.sourceBalance} code={false} />
-                  </td>
-                  <td className="px-4 py-2.5 text-right text-[14px] font-semibold">
-                    <Money amount={totals.liveBalance} code={false} />
-                  </td>
-                  <td colSpan={3} />
-                </tr>
+                {totals.byCurrency.map((c, i) => (
+                  <tr
+                    key={c.code}
+                    className={`bg-sunken font-medium ${
+                      i === 0 ? 'border-t-2 border-line-strong' : 'border-t border-line'
+                    }`}
+                  >
+                    <td className="px-4 py-2.5">Total, {c.code}</td>
+                    <td className="px-4 py-2.5 text-right text-ink-muted">
+                      <Money amount={c.sourceBalance} code={false} />
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-[14px] font-semibold">
+                      <Money amount={c.liveBalance} code={false} />
+                    </td>
+                    <td colSpan={3} />
+                  </tr>
+                ))}
               </tfoot>
             </table>
           </div>

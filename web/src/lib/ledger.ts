@@ -99,27 +99,62 @@ export function spendByCurrencyOverall(): CurrencySpend[] {
 
 /* ------------------------------------------------------------------ totals */
 
-export interface LedgerTotals {
-  /** Live AED across every card. AED only — all cards settle in AED. */
+/** What one settlement currency's accounts come to, on their own. */
+export interface CurrencyTotal {
+  code: string;
   liveBalance: number;
   sourceBalance: number;
   reconciliationDifference: number;
   cardCount: number;
+}
+
+export interface LedgerTotals {
+  /**
+   * Money, one set of figures per settlement currency and never one figure
+   * across them.
+   *
+   * This used to be a single `liveBalance`, correct only because every account
+   * happened to settle in AED — the comment on it said so. A SAR bank account
+   * makes that assumption false, and a single total would have added riyals to
+   * dirhams and labelled the result AED. Counts are still summed, because a
+   * transaction is a transaction whatever it settled in.
+   */
+  byCurrency: CurrencyTotal[];
+  cardCount: number;
   transactionCount: number;
   needsReview: number;
   excluded: number;
-  /** Cards whose source and ledger balances disagree. */
+  /** Accounts whose source and ledger balances disagree, in any currency. */
   cardsWithDifference: Card[];
-  reviewAdjustmentsTotal: number;
 }
 
 export function getTotals(): LedgerTotals {
   const cards = data.cards;
   const sum = (f: (c: Card) => number) => cards.reduce((a, c) => a + f(c), 0);
+
+  const groups = new Map<string, Card[]>();
+  for (const c of cards) {
+    const code = c.settlementCurrency || 'AED';
+    if (!groups.has(code)) groups.set(code, []);
+    groups.get(code)!.push(c);
+  }
+
+  const byCurrency = [...groups.entries()]
+    .map(([code, group]) => ({
+      code,
+      liveBalance: round2(group.reduce((a, c) => a + c.ledgerBalance, 0)),
+      sourceBalance: round2(group.reduce((a, c) => a + c.sourceBalance, 0)),
+      reconciliationDifference: round2(
+        group.reduce((a, c) => a + c.reconciliationDifference, 0),
+      ),
+      cardCount: group.length,
+    }))
+    // Most accounts first, so the currency the business mostly runs in leads
+    // rather than whichever code happens to sort first.
+    .sort((a, b) => b.cardCount - a.cardCount || a.code.localeCompare(b.code));
+
   return {
-    liveBalance: round2(sum((c) => c.ledgerBalance)),
-    sourceBalance: round2(sum((c) => c.sourceBalance)),
-    reconciliationDifference: round2(sum((c) => c.reconciliationDifference)),
+    byCurrency,
     cardCount: cards.length,
     transactionCount: sum((c) => c.transactionCount),
     needsReview: sum((c) => c.needsReview),
@@ -127,7 +162,6 @@ export function getTotals(): LedgerTotals {
     cardsWithDifference: cards.filter(
       (c) => Math.abs(c.reconciliationDifference) > 0.005,
     ),
-    reviewAdjustmentsTotal: round2(sum((c) => c.reviewAdjustmentsTotal)),
   };
 }
 
