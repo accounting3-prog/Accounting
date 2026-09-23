@@ -62,6 +62,11 @@ const MAPPABLE: FieldKey[] = [
   'supplier',
   'decrease',
   'increase',
+  // A bank statement's shape: one unsigned amount and a word saying which way.
+  // Listed so a reviewer can see what it was read from, and correct it.
+  'amount_abs',
+  'txn_type',
+  'statement_balance',
   'currency',
   'original_amount',
   'rate',
@@ -813,7 +818,9 @@ export function Import() {
                       <th className="px-3 py-2 font-medium">Row</th>
                       <th className="px-3 py-2 font-medium">Date</th>
                       <th className="px-3 py-2 font-medium">Supplier</th>
-                      <th className="px-3 py-2 text-right font-medium">AED</th>
+                      <th className="px-3 py-2 text-right font-medium">
+                        {card?.settlementCurrency ?? 'AED'}
+                      </th>
                       <th className="px-3 py-2 font-medium">Type</th>
                       <th className="px-3 py-2 font-medium">Original</th>
                       <th className="px-3 py-2 font-medium">Notes on this row</th>
@@ -955,7 +962,9 @@ export function Import() {
                     <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-ink-faint">
                       <th className="px-3 py-2 font-medium">Row</th>
                       <th className="px-3 py-2 font-medium">Transaction</th>
-                      <th className="px-3 py-2 text-right font-medium">AED</th>
+                      <th className="px-3 py-2 text-right font-medium">
+                        {card?.settlementCurrency ?? 'AED'}
+                      </th>
                       <th className="px-3 py-2 font-medium">Now</th>
                       <th className="px-3 py-2 font-medium">Becomes</th>
                       <th className="px-3 py-2 font-medium">Status</th>

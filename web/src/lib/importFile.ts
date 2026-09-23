@@ -497,8 +497,21 @@ export function bindDirectionColumns(
   const mapping = { ...result.mapping };
   const debit = result.debitColumns[0];
   const credit = result.creditColumns[0];
-  if (debit === undefined && credit === undefined)
+  if (debit === undefined && credit === undefined) {
+    // A bank statement has no DEBIT or CREDIT column and does not need one: it
+    // states one amount and names its direction beside it. Saying "this file
+    // has no DEBIT or CREDIT column" over a file that was read perfectly well
+    // reads as a failure, so what actually happened is said instead.
+    if (result.mapping.amount_abs !== undefined && result.mapping.txn_type !== undefined)
+      return {
+        mapping,
+        note:
+          'This file states one amount per row and says beside it whether it is a debit or a ' +
+          'credit. A debit lowers the balance and a credit raises it, which is what this ' +
+          "statement's own running balance does.",
+      };
     return { mapping, note: 'This file has no DEBIT or CREDIT column.' };
+  }
 
   // The card knows which of its own columns decreases the balance.
   const decreasingIsDebit = card ? DEBIT_RE.test(card.decreasingHeader) : true;
