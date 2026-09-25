@@ -134,7 +134,7 @@ export function History() {
         (area === 'all' || r.area === area) &&
         (actor === 'all' || r.actor === actor) &&
         (!q ||
-          `${r.subject} ${r.card_name ?? ''} ${r.rationale} ${r.actor} ${r.note ?? ''}`
+          `${r.subject} ${r.card_name ?? ''} ${r.rationale ?? ''} ${r.actor} ${r.note ?? ''}`
             .toLowerCase()
             .includes(q)),
     );

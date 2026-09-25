@@ -103,16 +103,13 @@ export function EditTransactionDialog({
   /**
    * Why Save cannot be pressed, in the words of the thing that is missing.
    *
-   * The button was simply disabled, while the footer beside it said "Unsaved
-   * changes" — so a reason left empty produced a screen that agreed something
-   * had been edited and then did nothing when asked to save it. That reads as
-   * the edit failing, which is exactly what it was reported as.
+   * Only one thing stops it now — having changed nothing. A reason used to as
+   * well, and the button was simply disabled while the footer beside it said
+   * "Unsaved changes", which read as the edit failing rather than as a field
+   * waiting to be filled in. That is worth keeping in mind for whatever is
+   * added here next: a disabled control has to say what it is waiting for.
    */
-  const blocked = !changed
-    ? 'Nothing changed yet'
-    : !rationale.trim()
-    ? 'Add a reason below to save this'
-    : null;
+  const blocked = changed ? null : 'Nothing changed yet';
 
   const submit = async () => {
     if (!rationale.trim() || !changed || busy) return;
@@ -247,12 +244,7 @@ export function EditTransactionDialog({
 
           <label className="mt-4 block">
             <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-              Reason <span className="text-negative">*</span>
-              {changed && !rationale.trim() && (
-                <span className="ml-2 font-normal text-review">
-                  — needed before this edit can be saved
-                </span>
-              )}
+              Reason <span className="font-normal text-ink-faint">(optional)</span>
             </span>
             <textarea
               value={rationale}
@@ -262,7 +254,9 @@ export function EditTransactionDialog({
               className="mt-1 w-full rounded-sm border border-line-strong bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
             />
             <span className="mt-1 block text-xs text-ink-muted">
-              Stored with the before and after of every field this changes. Required.
+              Stored with the before and after of every field this changes. The edit is
+              recorded either way — with your name and the time — but without a line
+              here, the History will say what changed and not why.
             </span>
           </label>
 

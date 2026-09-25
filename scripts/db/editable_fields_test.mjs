@@ -25,13 +25,21 @@ const check = (label, ok, detail = '') => {
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${label.padEnd(62)}${detail}`);
 };
 
-// 028 is the current definition and is self-sufficient: it renames the column
-// 025 and 026 created, under whichever name it still carries, and creates it
-// otherwise. So
-// applying it alone reproduces exactly the state the live database is in.
-const migration = (await readFile('supabase/migrations/028_lpo_number_is_the_field.sql', 'utf8'))
-  .replace(/^\s*begin\s*;\s*$/gim, '')
-  .replace(/^\s*commit\s*;\s*$/gim, '');
+// The migrations that between them define update_transaction as it stands,
+// applied in order inside this test's own transaction so it runs the same
+// function the live database runs.
+//
+// 028 settles the column and the field tracking; 033 makes the reason
+// optional. Applying only the first would test a function that no longer
+// exists — which is exactly what happened when 033 landed and this file kept
+// asserting that an edit without a reason is refused.
+const strip = (sql) =>
+  sql.replace(/^\s*begin\s*;\s*$/gim, '').replace(/^\s*commit\s*;\s*$/gim, '');
+
+const migration = [
+  strip(await readFile('supabase/migrations/028_lpo_number_is_the_field.sql', 'utf8')),
+  strip(await readFile('supabase/migrations/033_a_reason_is_optional.sql', 'utf8')),
+].join('\n');
 
 const client = await connect();
 
@@ -239,18 +247,24 @@ try {
 
     /* -------------------------------------------- it is not a way past the rules */
 
-    // An LPO is still an edit, and an edit without a reason is refused.
-    let refused = null;
-    try {
-      await client.query(
-        `select update_transaction(p_id := $1, p_rationale := $2, p_lpo_number := $3)`,
-        [row.id, '   ', 'LPO-TEST-0001'],
-      );
-    } catch (e) {
-      refused = e.message;
-    }
-    check('changing only the LPO still needs a stated reason',
-          /reason is required/i.test(refused ?? ''), refused ? '' : 'IT WAS ALLOWED');
+    // A reason is optional since 033. What must not have gone with it is the
+    // record itself: an edit made without one is still written down, still
+    // names who made it, and still carries the before and after. Losing that
+    // would turn "the reason is optional" into "the change is untraceable",
+    // and the two are not the same concession.
+    await client.query(
+      `select update_transaction(p_id := $1, p_rationale := null, p_lpo_number := $2)`,
+      [row.id, 'LPO-NO-REASON'],
+    );
+    const silent = await lastChange();
+    check('an edit with no reason is accepted',
+          (await lpoOf(row.id)) === 'LPO-NO-REASON');
+    check('and is still recorded, with no reason invented for it',
+          silent.rationale === null, JSON.stringify(silent.rationale));
+    check('with its author and the before and after intact',
+          Boolean(silent.field_changes?.lpo_number) &&
+          silent.field_changes.lpo_number.to === 'LPO-NO-REASON',
+          JSON.stringify(silent.field_changes?.lpo_number));
   } catch (e) {
     // A check that cannot even run is a failure, and it should read as one
     // line saying why rather than as a stack trace. Breaking this migration
