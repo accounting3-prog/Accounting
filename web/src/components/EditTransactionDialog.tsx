@@ -100,6 +100,20 @@ export function EditTransactionDialog({
     rate !== (t.exchange_rate != null ? String(t.exchange_rate) : '') ||
     notes !== (t.notes ?? '');
 
+  /**
+   * Why Save cannot be pressed, in the words of the thing that is missing.
+   *
+   * The button was simply disabled, while the footer beside it said "Unsaved
+   * changes" — so a reason left empty produced a screen that agreed something
+   * had been edited and then did nothing when asked to save it. That reads as
+   * the edit failing, which is exactly what it was reported as.
+   */
+  const blocked = !changed
+    ? 'Nothing changed yet'
+    : !rationale.trim()
+    ? 'Add a reason below to save this'
+    : null;
+
   const submit = async () => {
     if (!rationale.trim() || !changed || busy) return;
     setBusy(true);
@@ -234,6 +248,11 @@ export function EditTransactionDialog({
           <label className="mt-4 block">
             <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
               Reason <span className="text-negative">*</span>
+              {changed && !rationale.trim() && (
+                <span className="ml-2 font-normal text-review">
+                  — needed before this edit can be saved
+                </span>
+              )}
             </span>
             <textarea
               value={rationale}
@@ -258,12 +277,21 @@ export function EditTransactionDialog({
         </div>
 
         <footer className="flex items-center justify-between gap-2 border-t border-line px-4 py-3">
-          <span className="text-xs text-ink-muted">
-            {changed ? 'Unsaved changes' : 'Nothing changed yet'}
+          <span
+            className={`text-xs ${
+              blocked && changed ? 'font-medium text-review' : 'text-ink-muted'
+            }`}
+          >
+            {blocked ?? 'Unsaved changes'}
           </span>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-            <Button variant="primary" onClick={submit} disabled={busy || !changed || !rationale.trim()}>
+            <Button
+              variant="primary"
+              onClick={submit}
+              disabled={busy || Boolean(blocked)}
+              title={blocked ?? undefined}
+            >
               {busy ? 'Saving…' : 'Save edit'}
             </Button>
           </div>
