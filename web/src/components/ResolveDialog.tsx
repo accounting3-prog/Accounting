@@ -178,17 +178,28 @@ export function ResolveDialog({
           )}
         </div>
 
-        <footer className="flex items-center justify-end gap-2 border-t border-line px-4 py-3">
-          <Button variant="ghost" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button
-            variant={action === 'void' ? 'danger' : 'primary'}
-            onClick={submit}
-            disabled={busy || !rationale.trim()}
-          >
-            {busy ? 'Applying…' : label}
-          </Button>
+        <footer className="flex items-center justify-between gap-2 border-t border-line px-4 py-3">
+          {/* A disabled button has to say what it is waiting for. Editing had
+              the same shape and was reported as the save being broken. Here
+              the reason is genuinely required — resolving a flagged row IS the
+              decision, and the queue exists to record decisions — so the thing
+              to fix is the silence, not the rule. */}
+          <span className="text-xs text-review">
+            {!rationale.trim() ? 'Say why, and this becomes available' : ''}
+          </span>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={onClose} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              variant={action === 'void' ? 'danger' : 'primary'}
+              onClick={submit}
+              disabled={busy || !rationale.trim()}
+              title={!rationale.trim() ? 'Say why, and this becomes available' : undefined}
+            >
+              {busy ? 'Applying…' : label}
+            </Button>
+          </div>
         </footer>
       </div>
     </div>

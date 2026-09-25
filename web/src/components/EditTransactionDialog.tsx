@@ -112,7 +112,15 @@ export function EditTransactionDialog({
   const blocked = changed ? null : 'Nothing changed yet';
 
   const submit = async () => {
-    if (!rationale.trim() || !changed || busy) return;
+    // The same condition the button is disabled by, and deliberately the same
+    // expression rather than a second copy of it.
+    //
+    // Making the reason optional changed the button and left this guard behind
+    // still demanding one. The button was enabled, the click ran this, and it
+    // returned here — no request, no error, no close. A press that does
+    // nothing at all and says nothing at all, which is exactly how it was
+    // reported: "still can't save it".
+    if (blocked || busy) return;
     setBusy(true);
     setError(null);
     const result = await updateTransaction({
