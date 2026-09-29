@@ -44,7 +44,17 @@ const ACCOUNT_OVERRIDE = process.env.ACCOUNT ?? null;
 
 const money = (n) =>
   Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const figure = (v) => Number(String(v ?? '').replace(/[^0-9.]/g, '')) || 0;
+/**
+ * A number as the bank wrote it: thousands separators, a currency word, a
+ * minus sign or brackets for an overdrawn balance. The sign is read before the
+ * separators are stripped, because stripping them removes it too.
+ */
+const figure = (v) => {
+  const text = String(v ?? '').trim();
+  const negative = text.startsWith('-') || /^\(.*\)$/.test(text);
+  const n = Number(text.replace(/[^0-9.]/g, ''));
+  return Number.isFinite(n) ? (negative ? -n : n) : 0;
+};
 
 let failures = 0;
 const check = (label, ok, detail = '') => {
@@ -86,14 +96,42 @@ try {
     .find(Boolean);
   const periodStart = period ? `${period[3]}-${period[2]}-${period[1]}` : null;
 
-  const summary = sheet.rows[
-    sheet.rows.findIndex((r) => r.some((c) => /Total Credits/i.test(String(c ?? '')))) + 1
-  ] ?? [];
-  const bank = {
-    transactions: figure(summary[1]),
-    creditValue: figure(summary[3]), debitValue: figure(summary[5]),
-    opening: figure(summary[6]), closing: figure(summary[7]),
+  // The bank's summary line, read by the words printed above each number and
+  // not by where the number sits. A column added, dropped or reordered would
+  // otherwise move every figure along by one and be silent about it: the
+  // opening balance would quietly become the debit total, and the import would
+  // still look like it worked.
+  const labelRow = sheet.rows.findIndex((r) =>
+    r.some((c) => /Total Credits/i.test(String(c ?? ''))),
+  );
+  if (labelRow < 0) throw new Error('the statement has no summary line');
+  const labels = sheet.rows[labelRow] ?? [];
+  const values = sheet.rows[labelRow + 1] ?? [];
+  const stated = (label) => {
+    const at = labels.findIndex((c) => label.test(String(c ?? '').trim()));
+    if (at < 0) throw new Error(`the summary line has no "${label.source}" column`);
+    return figure(values[at]);
   };
+  const bank = {
+    transactions: stated(/^Number of Transactions?$/i),
+    creditValue: stated(/^Credit Value$/i),
+    debitValue: stated(/^Debit Value$/i),
+    opening: stated(/^Opening Balance$/i),
+    closing: stated(/^Closing Balance$/i),
+  };
+
+  // The summary must agree with itself before any of it is believed. This is
+  // what catches a figure read out of the wrong column: five numbers taken
+  // from the right places add up, five taken from the wrong ones do not.
+  const summaryGap = bank.opening + bank.creditValue - bank.debitValue - bank.closing;
+  check(
+    "the statement's own summary adds up",
+    Math.abs(summaryGap) < 0.005,
+    `${money(bank.opening)} + ${money(bank.creditValue)} - ${money(bank.debitValue)} ` +
+      `= ${money(bank.closing)}` + (Math.abs(summaryGap) < 0.005 ? '' : ` — out by ${money(summaryGap)}`),
+  );
+  if (Math.abs(summaryGap) >= 0.005)
+    throw new Error('the summary line was not read correctly — refusing to import against it');
 
   console.log(`  account ${accountNumber}, in ${statedCurrency}`);
   console.log(`  the bank states: ${bank.transactions} transactions from ${periodStart ?? '?'} to the report date,`);
@@ -211,6 +249,13 @@ try {
 
   console.log(`  ${rows.length} rows read · ${known.length} already in the ledger · ${fresh.length} to import`);
   check('no row is refused', refused.length === 0, refused[0]?.errors[0] ?? '');
+  // The bank says how many lines it wrote. Reading a different number of them
+  // means the table was found in the wrong place, or part of it was skipped.
+  check(
+    'as many rows were read as the bank says it wrote',
+    rows.length === bank.transactions,
+    `${rows.length} read, ${bank.transactions} stated`,
+  );
 
   /* ------------------------------------------------------------- write them */
 
