@@ -11,11 +11,10 @@
  * and will not submit without a reason.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { updateTransaction } from '../lib/api';
 import { currencyCodes } from '../lib/currencies';
 import { formatDate } from '../lib/format';
-import { projectBalance } from '../lib/ledger';
 import type { Card, Transaction, TxnKind } from '../lib/types';
 import { Button, Field, Money, Notice, fieldClass } from './ui';
 
@@ -30,6 +29,26 @@ function kindOf(t: Transaction): TxnKind {
   return t.direction === 'funding' ? 'refund' : 'purchase';
 }
 
+/**
+ * A value the source decides, shown in the shape of a field and not editable.
+ *
+ * Deliberately not a disabled input: a greyed-out box invites people to try,
+ * and then to ask why it will not take. This reads as a stated fact, with the
+ * reason beside it.
+ */
+function Locked({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+        {label}
+      </span>
+      <p className="mt-1 rounded-sm border border-line bg-sunken px-2.5 py-1.5 text-sm text-ink">
+        {value}
+      </p>
+    </div>
+  );
+}
+
 export function EditTransactionDialog({
   transaction,
   card,
@@ -41,10 +60,6 @@ export function EditTransactionDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const [date, setDate] = useState('');
-  const [kind, setKind] = useState<TxnKind>('purchase');
-  const [amount, setAmount] = useState('');
-  const [supplier, setSupplier] = useState('');
   const [req, setReq] = useState('');
   const [paymentRef, setPaymentRef] = useState('');
   const [lpoNumber, setLpoNumber] = useState('');
@@ -58,10 +73,6 @@ export function EditTransactionDialog({
 
   useEffect(() => {
     if (!transaction) return;
-    setDate(transaction.txn_date ?? '');
-    setKind(kindOf(transaction));
-    setAmount(String(Math.abs(transaction.amount_aed)));
-    setSupplier(transaction.supplier ?? '');
     setReq(transaction.req_number ?? '');
     setPaymentRef(transaction.payment_ref ?? '');
     setLpoNumber(transaction.lpo_number ?? '');
@@ -75,23 +86,13 @@ export function EditTransactionDialog({
     setError(null);
   }, [transaction]);
 
-  const projected = useMemo(() => {
-    if (!transaction || !card) return null;
-    const positive = Number(amount);
-    if (!Number.isFinite(positive) || positive <= 0) return null;
-    const signed = kind === 'purchase' || kind === 'fee' ? -positive : positive;
-    // Take the old effect out and put the new one in.
-    return projectBalance(card, signed - transaction.amount_aed);
-  }, [transaction, card, amount, kind]);
-
   if (!transaction || !card) return null;
   const t = transaction;
 
+  // Only the fields this screen can still change. The date, type, amount and
+  // supplier are no longer among them, so they cannot make `changed` true and
+  // are never sent.
   const changed =
-    date !== (t.txn_date ?? '') ||
-    kind !== kindOf(t) ||
-    Number(amount) !== Math.abs(t.amount_aed) ||
-    supplier !== (t.supplier ?? '') ||
     req !== (t.req_number ?? '') ||
     paymentRef !== (t.payment_ref ?? '') ||
     lpoNumber !== (t.lpo_number ?? '') ||
@@ -126,11 +127,9 @@ export function EditTransactionDialog({
     const result = await updateTransaction({
       p_id: t.id,
       p_rationale: rationale.trim(),
-      p_txn_date: date || null,
-      p_amount_aed: Number(amount) || null,
-      p_kind: kind,
-      p_supplier: supplier.trim() || null,
-      p_supplier_country: t.supplier_country ?? null,
+      // Not sent at all, rather than sent unchanged: update_transaction reads
+      // a null as "leave this alone", so the row's date, amount, direction and
+      // supplier cannot be touched from here even by a malformed request.
       p_req_number: req.trim() || null,
       p_payment_ref: paymentRef.trim() || null,
       // Sent even when empty, unlike the fields above: an empty string tells
@@ -171,23 +170,25 @@ export function EditTransactionDialog({
 
         <div className="px-4 py-4">
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Transaction date">
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={fieldClass} />
-            </Field>
-            <Field label="Type" hint="Decides the sign; the amount stays positive.">
-              <select value={kind} onChange={(e) => setKind(e.target.value as TxnKind)} className={fieldClass}>
-                {KINDS.map((k) => (
-                  <option key={k.value} value={k.value}>{k.label}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="AED settlement amount">
-              <input type="number" step="0.01" min="0" value={amount}
-                     onChange={(e) => setAmount(e.target.value)} className={`${fieldClass} tnum`} />
-            </Field>
-            <Field label="Supplier">
-              <input value={supplier} onChange={(e) => setSupplier(e.target.value)} className={fieldClass} />
-            </Field>
+            {/* The date, the amount, the direction and who was paid are what
+                the source says happened, and they are also exactly what the
+                importer recognises a row by. Editing one does not correct the
+                row — it makes the row unrecognisable, so the next upload of
+                the same statement writes it again and the balance moves by an
+                amount nobody asked for. Shown, so the edit screen still tells
+                you what you are annotating, and not editable. */}
+            <Locked label="Transaction date" value={formatDate(t.txn_date)} />
+            <Locked
+              label="Type"
+              value={KINDS.find((k) => k.value === kindOf(t))?.label ?? kindOf(t)}
+            />
+            <Locked
+              label={`${card.settlementCurrency} settlement amount`}
+              value={Math.abs(t.amount_aed).toLocaleString('en-US', {
+                minimumFractionDigits: 2, maximumFractionDigits: 2,
+              })}
+            />
+            <Locked label="Supplier" value={t.supplier ?? t.description ?? '—'} />
             <Field label="Request number">
               <input value={req} onChange={(e) => setReq(e.target.value)} className={fieldClass} />
             </Field>
@@ -227,19 +228,25 @@ export function EditTransactionDialog({
 
           <dl className="mt-4 space-y-1.5 rounded-sm border border-line bg-sunken px-3 py-2.5 text-[13px]">
             <div className="flex justify-between gap-4">
-              <dt className="text-ink-muted">Official live balance now</dt>
-              <dd><Money amount={card.ledgerBalance} code={false} /></dd>
-            </div>
-            <div className="flex justify-between gap-4">
               <dt className="text-ink-muted">This transaction, as recorded</dt>
-              <dd><Money amount={t.amount_aed} signed tone="ledger" code={false} /></dd>
-            </div>
-            <div className="flex justify-between gap-4 border-t border-line pt-1.5 font-medium">
-              <dt>Balance after this edit</dt>
-              <dd className="text-base font-semibold">
-                <Money amount={projected} code={false} />
-                <span className="ml-1 text-xs text-ink-faint">AED</span>
+              <dd>
+                <Money amount={t.amount_aed} signed tone="ledger" code={false} />
+                <span className="ml-1 text-xs text-ink-faint">{card.settlementCurrency}</span>
               </dd>
+            </div>
+            {card.tracksBalance !== false && (
+              <div className="flex justify-between gap-4 border-t border-line pt-1.5">
+                <dt className="text-ink-muted">Balance on this account</dt>
+                <dd>
+                  <Money amount={card.ledgerBalance} code={false} />
+                  <span className="ml-1 text-xs text-ink-faint">{card.settlementCurrency}</span>
+                </dd>
+              </div>
+            )}
+            <div className="border-t border-line pt-1.5 text-xs text-ink-muted">
+              Nothing on this screen moves either figure. The amount, the date, the direction
+              and who was paid are what the source recorded; only the references beside them
+              can be changed here.
             </div>
           </dl>
 
