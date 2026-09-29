@@ -693,6 +693,13 @@ export function Import() {
               {/* The mapping is usually right, and fifteen dropdowns would bury
                   the rows the reviewer actually needs to read. It opens by
                   itself when something essential is missing. */}
+              {/* A column bound by evidence rather than by its name is still a
+                  decision made on the reviewer's behalf, so it is said out
+                  loud where the mapping is described. */}
+              {analysis?.referenceNote && (
+                <p className="text-[13px] text-review">{analysis.referenceNote}</p>
+              )}
+
               <div>
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className={labelClass}>Columns</span>

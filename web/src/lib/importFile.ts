@@ -549,6 +549,12 @@ export interface SheetAnalysis {
   directionNote: string;
   /** True where the date column was found by its contents, not its name. */
   dateFoundByContent: boolean;
+  /**
+   * Set when the reference was read from a column other than the one whose
+   * name matched, because the named one was empty. Shown to the reviewer:
+   * a guess corrected by evidence is still a guess worth stating.
+   */
+  referenceNote: string;
   dayFirst: boolean;
   /** The value that settled the day/month order, if one did. */
   dayFirstProof: string | null;
@@ -584,6 +590,41 @@ export function analyseSheet(sheet: ParsedSheet, card: Card | undefined): SheetA
     }
   }
 
+  /* ---------------------------- a reference column that is actually filled in */
+
+  // The reconciliation workbook has a column headed REQ and a column headed
+  // Customer. REQ is the one whose name matches, and on every sheet of the
+  // year it is empty — the references live under Customer: KSAML2654, BAC,
+  // 902. Mapping on the name alone bound the empty one and dropped every
+  // reference the file carried.
+  //
+  // So where the mapped column has nothing in it and another column has both
+  // a plausible name and actual content, the filled one wins. Names are a
+  // guess about meaning; content is evidence.
+  const columnHasData = (index: number | undefined): boolean =>
+    index !== undefined &&
+    sheet.rows.slice(headerRow + 1).some((r) => String((r ?? [])[index] ?? '').trim() !== '');
+
+  let referenceNote = '';
+  if (headerRow >= 0 && !columnHasData(mapping.req_number)) {
+    const candidate = headers.findIndex(
+      (h, i) =>
+        i !== mapping.req_number &&
+        !Object.values(mapping).includes(i) &&
+        /^(customer|reference|ref\.?)$/i.test(String(h ?? '').replace(/\s+/g, ' ').trim()) &&
+        columnHasData(i),
+    );
+    if (candidate !== -1) {
+      const from = mapping.req_number === undefined
+        ? null
+        : String(headers[mapping.req_number] ?? '').trim();
+      mapping.req_number = candidate;
+      referenceNote =
+        `The request number is read from “${String(headers[candidate] ?? '').trim()}”` +
+        (from ? `, because “${from}” is empty on every row.` : '.');
+    }
+  }
+
   const dateValues =
     mapping.date === undefined
       ? []
@@ -591,6 +632,7 @@ export function analyseSheet(sheet: ParsedSheet, card: Card | undefined): SheetA
   const { dayFirst, proof, conflict } = inferDayFirst(dateValues);
 
   return {
+    referenceNote,
     headerRow,
     headers,
     mapping,

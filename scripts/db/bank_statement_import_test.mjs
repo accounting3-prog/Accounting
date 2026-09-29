@@ -50,6 +50,7 @@ try {
   const [cardRow] = await q(
     client,
     `select c.id, c.name, c.settlement_currency, c.balance_sign,
+            c.card_type, c.tracks_balance,
             c.opening_balance::float8 ob, to_char(c.opening_date,'YYYY-MM-DD') od,
             c.source_header_row, c.decreasing_column, c.decreasing_header,
             c.increasing_column, c.increasing_header, c.balance_formula
@@ -61,6 +62,11 @@ try {
   const card = {
     id: cardRow.id, name: cardRow.name,
     settlementCurrency: cardRow.settlement_currency,
+    // Carried because the importer reads it: a charge line on a bank account
+    // labels itself BAC, and a fixture without this silently tested a version
+    // of the account that does not exist.
+    cardType: cardRow.card_type ?? undefined,
+    tracksBalance: cardRow.tracks_balance !== false,
     balanceSign: Number(cardRow.balance_sign),
     openingBalance: Number(cardRow.ob), openingDate: cardRow.od,
     sourceHeaderRow: cardRow.source_header_row ?? 1,
@@ -77,6 +83,25 @@ try {
   const sheets = parseXlsx(new Uint8Array(readFileSync(STATEMENT)));
   const sheet = sheets[0];
   const analysis = analyseSheet(sheet, card);
+
+  // The bank's own summary block, read from the file rather than written here.
+  // An earlier version asserted 167 rows and two totals taken from the
+  // statement it happened to be written against, which made it a test of one
+  // afternoon's download rather than of the importer.
+  const figure = (v) => Number(String(v ?? '').replace(/[^0-9.]/g, '')) || 0;
+  const summary = sheet.rows[
+    sheet.rows.findIndex((r) => r.some((c) => /Total Credits/i.test(String(c ?? '')))) + 1
+  ] ?? [];
+  const bank = {
+    transactions: figure(summary[1]),
+    credits: figure(summary[2]), creditValue: figure(summary[3]),
+    debits: figure(summary[4]), debitValue: figure(summary[5]),
+    opening: figure(summary[6]), closing: figure(summary[7]),
+  };
+  console.log(`  the bank says: ${bank.transactions} transactions, ` +
+    `${bank.debits} debits of ${money(bank.debitValue)}, ${bank.credits} credits of ${money(bank.creditValue)}`);
+  console.log(`  opening ${money(bank.opening)}   closing ${money(bank.closing)}
+`);
 
   check('the real header is found, past the account details above it',
         analysis.headerRow === 17, `row ${analysis.headerRow}`);
@@ -104,8 +129,9 @@ try {
   });
 
   const withAmount = rows.filter((r) => r.amountAed !== null);
-  check('every transaction row on the statement is read', withAmount.length === 167,
-        `${withAmount.length} of the bank's own count of 167`);
+  check('every transaction row on the statement is read',
+        withAmount.length === bank.transactions,
+        `${withAmount.length} of the bank's own count of ${bank.transactions}`);
 
   const spend = withAmount.filter((r) => r.kind === 'purchase');
   const inbound = withAmount.filter((r) => r.kind !== 'purchase');
@@ -115,14 +141,14 @@ try {
   // The statement prints its own totals in a summary block. These are the
   // figures to land on, and they were not told to the importer.
   check('debits total what the statement says they do',
-        Math.abs(spendTotal - 350314.45) < 0.005,
-        `${money(spendTotal)} vs the bank's 350,314.45`);
+        Math.abs(spendTotal - bank.debitValue) < 0.005,
+        `${money(spendTotal)} vs the bank's ${money(bank.debitValue)}`);
   check('credits total what the statement says they do',
-        Math.abs(inTotal - 2134803.58) < 0.005,
-        `${money(inTotal)} vs the bank's 2,134,803.58`);
+        Math.abs(inTotal - bank.creditValue) < 0.005,
+        `${money(inTotal)} vs the bank's ${money(bank.creditValue)}`);
   check('a Debit lowers the balance and a Credit raises it',
-        spend.length === 137 && inbound.length === 30,
-        `${spend.length} debits and ${inbound.length} credits, against the bank's 137 and 30`);
+        spend.length === bank.debits && inbound.length === bank.credits,
+        `${spend.length} debits and ${inbound.length} credits, against the bank's ${bank.debits} and ${bank.credits}`);
 
   check('each row carries the balance the bank printed beside it',
         withAmount.every((r) => r.statementBalance !== null),
@@ -139,19 +165,44 @@ try {
         known.every((r) => !r.include || r.duplicateOf),
         `${known.filter((r) => r.include && !r.duplicateOf).length} would slip through`);
 
-  // This statement covers 1-15 September and every one of those days is already
-  // in the ledger, so it should offer nothing new at all.
+  // A statement reaching further than the ledger SHOULD offer the days it has
+  // and the ledger does not. What must never happen is a row inside a period
+  // already recorded being offered again — that is the matching failing, and
+  // it is the difference between "this file has news" and "this file will
+  // duplicate everything".
   console.log(`\n  the statement covers ${withAmount.at(-1)?.date} to ${withAmount[0]?.date}`);
-  console.log(`  the ledger already holds ${existing.length} rows for this account\n`);
-  check('a statement whose every day is already recorded offers nothing new',
-        fresh.length === 0,
-        fresh.length ? `${fresh.length} rows would be written again` : 'nothing to import');
+  const held = existing.map((e) => e.txn_date).filter(Boolean).sort();
+  const lastHeld = held[held.length - 1] ?? '0000-00-00';
+  console.log(`  the ledger holds ${existing.length} rows for this account, up to ${lastHeld}\n`);
 
-  if (fresh.length) {
-    console.log('\n      the rows it thinks are new:\n');
-    for (const r of fresh.slice(0, 8))
+  const wronglyNew = fresh.filter((r) => r.date && r.date <= lastHeld);
+  check('nothing inside the period already recorded is offered again',
+        wronglyNew.length === 0,
+        wronglyNew.length
+          ? `${wronglyNew.length} already-held rows would be written twice`
+          : `${known.length} recognised, ${fresh.length} genuinely new`);
+
+  if (wronglyNew.length) {
+    console.log('\n      offered despite being inside the recorded period:\n');
+    for (const r of wronglyNew.slice(0, 8))
       console.log(`        ${r.date}  ${String(r.kind).padEnd(9)} ${money(r.amountAed).padStart(13)}   ${r.supplier.replace(/\s+/g, ' ').slice(0, 54)}`);
   }
+
+  /* --------------------------------------- every cost must carry a reference */
+
+  // A bank statement has no reference column at all, so a cost imported
+  // straight from one arrives with nothing to search on. Charges label
+  // themselves BAC; every other payment needs a request number put on it, and
+  // that is a thing to be told about rather than to discover later.
+  const needingRef = fresh.filter(
+    (r) => r.kind === 'purchase' && !String(r.reqNumber ?? '').trim(),
+  );
+  console.log(
+    `\n  of the ${fresh.length} new rows, ${needingRef.length} are costs carrying no request number\n`,
+  );
+  for (const r of needingRef.slice(0, 8))
+    console.log(`      ${r.date}  ${money(r.amountAed).padStart(12)}  ${r.supplier.replace(/\s+/g, ' ').slice(0, 50)}`);
+  if (needingRef.length > 8) console.log(`      … and ${needingRef.length - 8} more`);
 
   /* --------------------------------------------- and nothing was invented */
 
