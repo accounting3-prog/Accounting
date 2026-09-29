@@ -130,16 +130,19 @@ export function EditTransactionDialog({
       // Not sent at all, rather than sent unchanged: update_transaction reads
       // a null as "leave this alone", so the row's date, amount, direction and
       // supplier cannot be touched from here even by a malformed request.
-      p_req_number: req.trim() || null,
-      p_payment_ref: paymentRef.trim() || null,
-      // Sent even when empty, unlike the fields above: an empty string tells
-      // the database to clear the LPO number, where null would mean
-      // 'unchanged'.
+      // Every box on this screen is sent as it stands, empty or not. An empty
+      // string tells the database to remove what is there; null would mean
+      // "not supplied, leave it alone", which is what these used to send and
+      // why clearing a request number came back as "Nothing was changed" —
+      // the box was empty, the ledger still held the value, and the edit said
+      // nothing had happened.
+      p_req_number: req.trim(),
+      p_payment_ref: paymentRef.trim(),
       p_lpo_number: lpoNumber.trim(),
       p_currency: currency || null,
       p_original_amount: originalAmount ? Number(originalAmount) : null,
       p_exchange_rate: rate ? Number(rate) : null,
-      p_notes: notes.trim() || null,
+      p_notes: notes.trim(),
       // Blanking a currency has to be deliberate: leaving the field empty
       // otherwise means "unchanged", not "remove it".
       p_clear_currency: Boolean(t.currency) && currency === '',
