@@ -78,6 +78,18 @@ interface Column {
   header: string;
   get: (t: Transaction, card: Card | undefined) => string | number | null;
   numeric?: boolean;
+  /**
+   * A bank narrative runs to a dozen lines and several hundred characters.
+   * Excel spills a long value rightwards over every empty cell beside it, so a
+   * column like that hides whatever follows it — including the column someone
+   * opened the file to type into.
+   *
+   * Two things keep that from happening. A long column is either followed
+   * immediately by one that is never empty, which clips it at its own width,
+   * or it sits after everything anyone fills in, where spilling covers
+   * nothing. It is also given a wider column so more of it is readable.
+   */
+  long?: boolean;
 }
 
 export const EXPORT_COLUMNS: Column[] = [
@@ -92,17 +104,14 @@ export const EXPORT_COLUMNS: Column[] = [
   { header: 'Ledger ID', get: (t) => t.id },
   { header: 'Card', get: (_t, c) => c?.name ?? '' },
   { header: 'Date', get: (t) => t.txn_date ?? '' },
-  { header: 'Supplier', get: (t) => t.supplier ?? t.description ?? '' },
-  { header: 'Supplier country', get: (t) => t.supplier_country ?? '' },
-  { header: 'Request number', get: (t) => t.req_number ?? '' },
-  { header: 'Original currency', get: (t) => t.currency ?? '' },
-  { header: 'Original amount', get: (t) => t.original_amount ?? null, numeric: true },
-  { header: 'Exchange rate (source)', get: (t) => t.exchange_rate ?? null, numeric: true },
-  {
-    header: 'Exchange rate (normalized)',
-    get: (t) => t.normalized_exchange_rate ?? null,
-    numeric: true,
-  },
+
+  /**
+   * The supplier is how a person recognises the row they are typing against,
+   * so it stays here at the front rather than being pushed past twenty
+   * columns. The settlement amount follows it and is never empty, which is
+   * what stops the narrative spilling over everything to its right.
+   */
+  { header: 'Supplier', get: (t) => t.supplier ?? t.description ?? '', long: true },
   { header: 'AED settlement', get: (t) => t.amount_aed, numeric: true },
   {
     header: 'Type',
@@ -115,25 +124,40 @@ export const EXPORT_COLUMNS: Column[] = [
             ? 'Funding'
             : '',
   },
+
+  /* The columns people fill in, together and before any long text. */
+  { header: 'Request number', get: (t) => t.req_number ?? '' },
   { header: 'Payment reference', get: (t) => t.payment_ref ?? '' },
   { header: 'LPO number', get: (t) => t.lpo_number ?? '' },
   { header: 'Invoice', get: (t) => t.invoice ?? '' },
   { header: 'CRM', get: (t) => t.crm ?? '' },
-  { header: 'Account', get: (t) => t.account ?? '' },
   { header: 'Client', get: (t) => t.client ?? '' },
+  { header: 'Account', get: (t) => t.account ?? '' },
   { header: 'Sales operation', get: (t) => t.sales_operation ?? '' },
+
+  { header: 'Original currency', get: (t) => t.currency ?? '' },
+  { header: 'Original amount', get: (t) => t.original_amount ?? null, numeric: true },
+  { header: 'Exchange rate (source)', get: (t) => t.exchange_rate ?? null, numeric: true },
+  {
+    header: 'Exchange rate (normalized)',
+    get: (t) => t.normalized_exchange_rate ?? null,
+    numeric: true,
+  },
+  { header: 'Supplier country', get: (t) => t.supplier_country ?? '' },
   { header: 'Status', get: (t) => t.status.replace(/_/g, ' ') },
   { header: 'In source balance', get: (t) => (t.included_in_source_balance === false ? 'No' : 'Yes') },
-  { header: 'Source sheet', get: (t) => t.source_sheet ?? 'manual entry' },
   { header: 'Source row', get: (t) => t.source_row ?? null, numeric: true },
   { header: 'Source date (raw)', get: (t) => t.source_date_raw ?? '' },
   { header: 'Source currency text', get: (t) => t.currency_raw ?? '' },
   { header: 'Rate formula (source)', get: (t) => t.exchange_rate_formula ?? '' },
   { header: 'Date repaired', get: (t) => (t.date_repaired ? 'Yes' : '') },
-  { header: 'Review note', get: (t) => t.rate_review_note ?? '' },
-  { header: 'Review reason', get: (t) => t.review_reason ?? '' },
-  { header: 'Notes', get: (t) => t.notes ?? '' },
   { header: 'Occurrence', get: (t) => t.occurrence ?? 1, numeric: true },
+
+  /* Everything below runs long. Nothing is typed into a column after these. */
+  { header: 'Source sheet', get: (t) => t.source_sheet ?? 'manual entry', long: true },
+  { header: 'Review note', get: (t) => t.rate_review_note ?? '', long: true },
+  { header: 'Review reason', get: (t) => t.review_reason ?? '', long: true },
+  { header: 'Notes', get: (t) => t.notes ?? '', long: true },
 ];
 
 /** A human sentence describing what the file contains. */
@@ -261,8 +285,15 @@ function sheetXml(
           if (value === null || value === undefined || value === '') return '';
           if (typeof value === 'number' && Number.isFinite(value))
             return `<c r="${ref}" s="${r === headerRowIndex ? 2 : 1}"><v>${value}</v></c>`;
+          // A bank narrative arrives as a dozen short lines. Excel shows a line
+          // break inside a cell as nothing at all unless wrapping is on, so the
+          // words either side of it run together — "sarieLP IPSP2600IXD" — and
+          // the whole cell reads as one unbroken string. The breaks become
+          // spaces here, which is what a reader sees anyway, and the update
+          // import compares this text with the same whitespace collapsed so
+          // the file still matches the ledger it came from.
           return `<c r="${ref}" s="${r === headerRowIndex ? 2 : 0}" t="inlineStr"><is><t xml:space="preserve">${xmlEscape(
-            String(value),
+            String(value).replace(/\s+/g, ' ').trim(),
           )}</t></is></c>`;
         })
         .join('');
@@ -270,9 +301,20 @@ function sheetXml(
     })
     .join('');
 
+  // Wide enough for what is actually in the column, not just for its heading.
+  // A width taken from the heading alone cuts a ledger id in half and clips
+  // every account name, which is what makes a file look broken before anyone
+  // has read a number in it.
   const cols =
     widths ??
-    EXPORT_COLUMNS.map((c) => Math.min(Math.max(c.header.length + 4, 12), 34));
+    EXPORT_COLUMNS.map((c, i) => {
+      const longest = rows.reduce((w, row) => {
+        const cell = row[i];
+        if (cell === null || cell === undefined || isFormula(cell)) return w;
+        return Math.max(w, String(cell).length);
+      }, c.header.length);
+      return Math.min(Math.max(longest + 3, 11), c.long ? 70 : 38);
+    });
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">

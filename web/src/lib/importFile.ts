@@ -1327,6 +1327,18 @@ export interface UpdateRow {
 }
 
 const norm = (v: unknown): string => String(v ?? '').trim();
+/**
+ * The same text, with every run of whitespace reduced to one space.
+ *
+ * Used only for comparing a line in the file against the row it names. A bank
+ * narrative is stored as a dozen lines and is exported as one, and a person
+ * editing the sheet may add or lose a space without meaning anything by it.
+ * None of that is a disagreement about which transaction this is, and treating
+ * it as one would refuse every line of a perfectly good file. A different
+ * supplier is still a different supplier.
+ */
+const sameText = (a: string, b: string): boolean =>
+  a.replace(/\s+/g, ' ').trim().toUpperCase() === b.replace(/\s+/g, ' ').trim().toUpperCase();
 const money = (n: number | null | undefined) =>
   n === null || n === undefined ? '' : Number(n).toFixed(2);
 
@@ -1412,7 +1424,7 @@ export function buildUpdateRows(
           const same =
             label === 'AED settlement' || label === 'Original amount'
               ? Math.abs(Number(sheetValue || 0) - Number(ledgerValue || 0)) < 0.005
-              : sheetValue.toUpperCase() === ledgerValue.toUpperCase();
+              : sameText(sheetValue, ledgerValue);
           if (!same)
             built.conflicts.push({ field: label, sheet: sheetValue || '(blank)', ledger: ledgerValue || '(blank)' });
         }
