@@ -17,6 +17,7 @@ import {
 import { formatCount, formatDateShort, formatRate } from '../lib/format';
 import { exportCsv, exportFilename, exportXlsx, exportXlsxByCard } from '../lib/export';
 import { getCards, getTransactions,
+  settlementCurrenciesOf,
   totalsFor,
   type ResultTotals,
 } from '../lib/ledger';
@@ -116,6 +117,11 @@ export function Transactions() {
   /** What the rows on screen add up to. Recomputed as the filters change. */
 
   const totals = useMemo(() => totalsFor(results), [results]);
+  /** Which settlement currencies the rows on screen span. */
+  const resultCurrencies = useMemo(
+    () => settlementCurrenciesOf(results, cards),
+    [results, cards],
+  );
 
   const update = (patch: Partial<Filters>) => {
     setFilters((f) => ({ ...f, ...patch }));
@@ -230,7 +236,7 @@ export function Transactions() {
 
       {isFiltered(filters) && results.length > 0 && (
 
-        <ResultTotal totals={totals} />
+        <ResultTotal totals={totals} currencies={resultCurrencies} />
 
       )}
 
@@ -453,7 +459,13 @@ export function Transactions() {
                           )}
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-right font-medium">
-                          <Money amount={t.amount_aed} signed tone="ledger" code={false} />{' '}
+                          <Money
+                            amount={t.amount_aed}
+                            currency={cardsById.get(t.cardId)?.settlementCurrency ?? 'AED'}
+                            signed
+                            tone="ledger"
+                            code={false}
+                          />{' '}
                           {/* The settlement currency of the account this row
                               belongs to, not a heading over the whole column.
                               The list mixes AED cards with a SAR bank, and one
@@ -574,7 +586,27 @@ export function Transactions() {
  * 100 JPY are not 200 of anything. The AED figures can be totalled because
  * every card settles in AED; these cannot, so they stay apart.
  */
-function ResultTotal({ totals }: { totals: ResultTotals }) {
+function ResultTotal({
+  totals,
+  currencies,
+}: {
+  totals: ResultTotals;
+  currencies: string[];
+}) {
+  // A total is only a number if everything in it is the same kind of money.
+  // Filtered across the AED cards and the SAR bank, these figures were riyals
+  // added to dirhams with AED written beside them.
+  const currency = currencies.length === 1 ? currencies[0] : null;
+  if (!currency) {
+    return (
+      <div className="mb-4 rounded-md border border-line bg-review-soft px-3 py-2.5 text-[13px] text-review">
+        These rows settle in {currencies.join(' and ')}, so there is no one total to show.
+        Narrow the search to a single account, or to one of those currencies, and the
+        figures come back.
+      </div>
+    );
+  }
+
   const [copied, setCopied] = useState<string | null>(null);
 
   const copy = async (value: number, label: string) => {
@@ -616,8 +648,8 @@ function ResultTotal({ totals }: { totals: ResultTotals }) {
         <span className="ml-1 opacity-0 transition-opacity group-hover:opacity-100">copy</span>
       </span>
       <span className={`tnum ${strong ? 'text-lg font-semibold' : 'text-[15px]'}`}>
-        <Money amount={value} tone={tone} code={false} />
-        <span className="ml-1 text-xs font-normal text-ink-faint">AED</span>
+        <Money amount={value} currency={currency} tone={tone} code={false} />
+        <span className="ml-1 text-xs font-normal text-ink-faint">{currency}</span>
       </span>
       {copied === label && (
         <span className="text-[11px] text-positive">copied</span>

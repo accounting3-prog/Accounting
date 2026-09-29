@@ -230,7 +230,7 @@ export function EditTransactionDialog({
             <div className="flex justify-between gap-4">
               <dt className="text-ink-muted">This transaction, as recorded</dt>
               <dd>
-                <Money amount={t.amount_aed} signed tone="ledger" code={false} />
+                <Money amount={t.amount_aed} currency={card.settlementCurrency} signed tone="ledger" code={false} />
                 <span className="ml-1 text-xs text-ink-faint">{card.settlementCurrency}</span>
               </dd>
             </div>
@@ -238,7 +238,7 @@ export function EditTransactionDialog({
               <div className="flex justify-between gap-4 border-t border-line pt-1.5">
                 <dt className="text-ink-muted">Balance on this account</dt>
                 <dd>
-                  <Money amount={card.ledgerBalance} code={false} />
+                  <Money amount={card.ledgerBalance} currency={card.settlementCurrency} code={false} />
                   <span className="ml-1 text-xs text-ink-faint">{card.settlementCurrency}</span>
                 </dd>
               </div>

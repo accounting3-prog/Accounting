@@ -141,16 +141,16 @@ function Exceptions() {
               <dl className="tnum flex gap-6 text-[13px]">
                 <div className="text-right">
                   <dt className="text-xs text-ink-faint">Statement</dt>
-                  <dd><Money amount={card.sourceBalance} code={false} /></dd>
+                  <dd><Money currency={card.settlementCurrency} amount={card.sourceBalance} code={false} /></dd>
                 </div>
                 <div className="text-right">
                   <dt className="text-xs text-ink-faint">Ledger</dt>
-                  <dd className="font-semibold"><Money amount={card.ledgerBalance} code={false} /></dd>
+                  <dd className="font-semibold"><Money currency={card.settlementCurrency} amount={card.ledgerBalance} code={false} /></dd>
                 </div>
                 <div className="text-right">
                   <dt className="text-xs text-ink-faint">Difference</dt>
                   <dd className="font-medium text-negative">
-                    <Money amount={card.reconciliationDifference} code={false} />
+                    <Money currency={card.settlementCurrency} amount={card.reconciliationDifference} code={false} />
                   </dd>
                 </div>
               </dl>
@@ -168,8 +168,9 @@ function Exceptions() {
  * Two bars per month rather than one net figure: a month that spent 6.7m and
  * received 6.8m is not a quiet month, and a net of +110k would say it was.
  */
-function MonthlyActivity() {
-  const months = activityByMonth(6);
+function MonthlyActivity({ currency }: { currency: string }) {
+  const primaryCurrency = currency;
+  const months = activityByMonth(6, currency);
   if (months.length < 2) return null;
   const peak = Math.max(
     ...months.map((m) => Math.max(Math.abs(m.spend), Math.abs(m.funding))),
@@ -178,8 +179,8 @@ function MonthlyActivity() {
 
   return (
     <Panel
-      title="Spend and funding by month"
-      description="Shown separately. A net figure would hide a busy month that happened to balance."
+      title={`Spend and funding by month · ${currency}`}
+      description="Shown separately. A net figure would hide a busy month that happened to balance. Accounts settling in another currency are counted on their own." 
     >
       <div className="space-y-2.5 px-4 py-4">
         {months.map((m) => (
@@ -192,7 +193,7 @@ function MonthlyActivity() {
                   style={{ width: `${(Math.abs(m.spend) / peak) * 70}%` }}
                 />
                 <span className="tnum shrink-0 text-[11px] text-ink-muted">
-                  <Money amount={m.spend} code={false} />
+                  <Money currency={primaryCurrency} amount={m.spend} code={false} />
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -201,7 +202,7 @@ function MonthlyActivity() {
                   style={{ width: `${(Math.abs(m.funding) / peak) * 70}%` }}
                 />
                 <span className="tnum shrink-0 text-[11px] text-ink-muted">
-                  <Money amount={m.funding} code={false} />
+                  <Money currency={primaryCurrency} amount={m.funding} code={false} />
                 </span>
               </div>
             </div>
@@ -220,6 +221,25 @@ function MonthlyActivity() {
   );
 }
 
+/**
+ * The currency the whole-ledger figures below are about.
+ *
+ * Spend by month, top suppliers and spend by original currency all add up the
+ * settled amount across accounts — a column that holds riyals on the SAR bank
+ * and dirhams on the cards. Adding those together is not money, so each of
+ * them answers for one settlement currency, and it is named wherever they are
+ * shown. The one with the most accounts leads, which is the currency the
+ * business mostly runs in.
+ */
+function primaryCurrencyOf(cards: ReturnType<typeof getCards>): string {
+  const count = new Map<string, number>();
+  for (const c of cards) {
+    const code = c.settlementCurrency || 'AED';
+    count.set(code, (count.get(code) ?? 0) + 1);
+  }
+  return [...count.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? 'AED';
+}
+
 export function Dashboard() {
   const cards = getCards();
   const totals = getTotals();
@@ -227,8 +247,10 @@ export function Dashboard() {
     .filter((t) => t.txn_date)
     .sort((a, b) => (b.txn_date ?? '').localeCompare(a.txn_date ?? ''))
     .slice(0, 8);
-  const currencies = spendByCurrencyOverall();
-  const suppliers = topSuppliers(8);
+  const primaryCurrency = primaryCurrencyOf(cards);
+  const currencies = spendByCurrencyOverall(primaryCurrency);
+  const suppliers = topSuppliers(8, primaryCurrency);
+  const cardOf = (id: string) => cards.find((c) => c.id === id);
 
   return (
     <Page
@@ -269,26 +291,26 @@ export function Dashboard() {
                         {formatCount(c.transactionCount)} transactions
                         {Math.abs(c.reconciliationDifference) > 0.005 && (
                           <span className="ml-1.5 text-negative">
-                            · <Money amount={c.reconciliationDifference} code={false} /> unreconciled
+                            · <Money currency={c.settlementCurrency} amount={c.reconciliationDifference} code={false} /> unreconciled
                           </span>
                         )}
                       </div>
                     </td>
                     <td className="px-4 py-2.5 text-right text-ink-muted">
-                      <Money amount={c.sourceBalance} code={false} />
+                      <Money currency={c.settlementCurrency} amount={c.sourceBalance} code={false} />
                     </td>
                     <td
                       className={`px-4 py-2.5 text-right text-[14px] font-semibold ${
                         c.ledgerBalance < 0 ? 'text-negative' : ''
                       }`}
                     >
-                      <Money amount={c.ledgerBalance} code={false} />
+                      <Money currency={c.settlementCurrency} amount={c.ledgerBalance} code={false} />
                     </td>
                     <td className="px-4 py-2.5 text-right text-ink-muted">
-                      <Money amount={c.totalSpend} code={false} />
+                      <Money currency={c.settlementCurrency} amount={c.totalSpend} code={false} />
                     </td>
                     <td className="px-4 py-2.5 text-right text-ink-muted">
-                      <Money amount={c.totalFunding} code={false} />
+                      <Money currency={c.settlementCurrency} amount={c.totalFunding} code={false} />
                     </td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-right text-ink-muted">
                       {formatDateShort(c.lastTransaction)}
@@ -309,10 +331,10 @@ export function Dashboard() {
                   >
                     <td className="px-4 py-2.5">Total, {c.code}</td>
                     <td className="px-4 py-2.5 text-right text-ink-muted">
-                      <Money amount={c.sourceBalance} code={false} />
+                      <Money currency={c.code} amount={c.sourceBalance} code={false} />
                     </td>
                     <td className="px-4 py-2.5 text-right text-[14px] font-semibold">
-                      <Money amount={c.liveBalance} code={false} />
+                      <Money currency={c.code} amount={c.liveBalance} code={false} />
                     </td>
                     <td colSpan={3} />
                   </tr>
@@ -324,11 +346,11 @@ export function Dashboard() {
       </div>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
-        <MonthlyActivity />
+        <MonthlyActivity currency={primaryCurrency} />
 
         <Panel
-          title="Largest suppliers"
-          description="By AED settled — the one figure comparable across currencies."
+          title={`Largest suppliers · ${primaryCurrency}`}
+          description={`By ${primaryCurrency} settled. Accounts that settle in another currency are counted on their own, because their settled amounts are not the same kind of money.`}
         >
           {suppliers.length === 0 ? (
             <EmptyState title="No spend recorded" />
@@ -344,7 +366,7 @@ export function Dashboard() {
                       {s.count}
                     </td>
                     <td className="whitespace-nowrap px-4 py-2 text-right">
-                      <Money amount={s.aed} code={false} />
+                      <Money currency={primaryCurrency} amount={s.aed} code={false} />
                     </td>
                   </tr>
                 ))}
@@ -354,8 +376,8 @@ export function Dashboard() {
         </Panel>
 
         <Panel
-          title="Spend by original currency"
-          description="One row per currency, never a total. A sum across currencies would look like money and would not be."
+          title={`Spend by original currency · settled in ${primaryCurrency}`}
+          description="One row per currency, never a total. A sum across currencies would look like money and would not be." 
         >
           <div className="scroll-x">
             <table className="w-full border-collapse text-[13px]">
@@ -378,7 +400,7 @@ export function Dashboard() {
                       <Money amount={s.originalTotal} currency={s.currency} code={false} />
                     </td>
                     <td className="whitespace-nowrap px-4 py-2 text-right text-ink-muted">
-                      <Money amount={s.aedTotal} code={false} />
+                      <Money currency={primaryCurrency} amount={s.aedTotal} code={false} />
                     </td>
                   </tr>
                 ))}
@@ -448,7 +470,7 @@ export function Dashboard() {
                           )}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-right">
-                          <Money amount={t.amount_aed} signed tone="ledger" code={false} />
+                          <Money currency={cardOf(t.cardId)?.settlementCurrency ?? 'AED'} amount={t.amount_aed} signed tone="ledger" code={false} />
                         </td>
                       </tr>
                     );

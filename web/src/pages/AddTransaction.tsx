@@ -383,8 +383,8 @@ export function AddTransaction() {
               <div className="px-4 pb-4">
                 <Notice tone="review" title="The rate and the AED amount disagree">
                   {f.originalAmount} {f.currency} at {formatRate(Number(f.exchangeRate))}{' '}
-                  comes to <Money amount={impliedAed} />, but the settlement amount
-                  entered is <Money amount={amount} />. Both are kept exactly as
+                  comes to <Money currency={card?.settlementCurrency ?? 'AED'} amount={impliedAed} />, but the settlement amount
+                  entered is <Money currency={card?.settlementCurrency ?? 'AED'} amount={amount} />. Both are kept exactly as
                   entered — nothing is adjusted. Confirm which is right, or mark
                   the row for review.
                 </Notice>
@@ -479,7 +479,7 @@ export function AddTransaction() {
                     <div className="font-medium text-ink">{card.name}</div>
                     <div className="text-ink-muted">
                       Opened {formatDate(card.openingDate)} at{' '}
-                      <Money amount={card.openingBalance} code={false} /> AED
+                      <Money currency={card?.settlementCurrency ?? 'AED'} amount={card.openingBalance} code={false} /> AED
                     </div>
                   </div>
 
@@ -487,7 +487,7 @@ export function AddTransaction() {
                     <div className="flex items-baseline justify-between gap-4">
                       <dt className="text-ink-muted">Current live balance</dt>
                       <dd className="font-medium">
-                        <Money amount={card.ledgerBalance} code={false} />
+                        <Money currency={card?.settlementCurrency ?? 'AED'} amount={card.ledgerBalance} code={false} />
                       </dd>
                     </div>
                     <div className="flex items-baseline justify-between gap-4">
@@ -497,13 +497,13 @@ export function AddTransaction() {
                         {direction === 'funding' && ' — increases'}
                       </dt>
                       <dd className="font-medium">
-                        <Money amount={effect} signed tone="ledger" code={false} />
+                        <Money currency={card?.settlementCurrency ?? 'AED'} amount={effect} signed tone="ledger" code={false} />
                       </dd>
                     </div>
                     <div className="flex items-baseline justify-between gap-4 border-t border-line pt-2">
                       <dt className="font-medium text-ink">Projected balance</dt>
                       <dd className="text-base font-semibold">
-                        <Money amount={projected} code={false} />
+                        <Money currency={card?.settlementCurrency ?? 'AED'} amount={projected} code={false} />
                         <span className="ml-1 text-xs text-ink-faint">AED</span>
                       </dd>
                     </div>
@@ -524,7 +524,7 @@ export function AddTransaction() {
                         {Number(f.exchangeRate) > 0 && (
                           <>
                             {' '}× {formatRate(Number(f.exchangeRate))} ={' '}
-                            <Money amount={impliedAed} code={false} /> AED
+                            <Money currency={card?.settlementCurrency ?? 'AED'} amount={impliedAed} code={false} /> AED
                           </>
                         )}
                       </div>
@@ -562,7 +562,7 @@ export function AddTransaction() {
                 {duplicates.slice(0, 3).map((d) => (
                   <li key={d.id} className="text-xs text-ink-muted">
                     {d.source_sheet} row {d.source_row} · {formatDate(d.txn_date)} ·{' '}
-                    <Money amount={d.amount_aed} signed code={false} /> AED
+                    <Money currency={card?.settlementCurrency ?? 'AED'} amount={d.amount_aed} signed code={false} /> AED
                   </li>
                 ))}
               </ul>

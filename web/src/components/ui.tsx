@@ -20,14 +20,23 @@ import { formatAmount } from '../lib/format';
  */
 export function Money({
   amount,
-  currency = 'AED',
+  currency,
   signed = false,
   tone = 'plain',
   code = true,
   className = '',
 }: {
   amount: number | null | undefined;
-  currency?: string;
+  /**
+   * Required, with no default.
+   *
+   * It used to default to 'AED', which was right for every account the ledger
+   * had and then silently wrong for the SAR bank: the Banks page printed
+   * 5,717,314.12 AED over a riyal balance. A default here means a caller that
+   * forgets is not a compile error, it is a wrong currency on screen — so
+   * there is no default, and every caller has to say.
+   */
+  currency: string;
   signed?: boolean;
   tone?: 'plain' | 'ledger' | 'muted';
   code?: boolean;

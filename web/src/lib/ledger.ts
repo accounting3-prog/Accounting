@@ -56,6 +56,13 @@ export function getLedger(): LedgerData {
  * account's recorded type, not its name: 'BANK KSA' happens to say so, but the
  * next account added might not.
  */
+/** The ids of the accounts that settle in one currency. */
+function accountsIn(currency: string): Set<string> {
+  return new Set(
+    data.cards.filter((c) => (c.settlementCurrency || 'AED') === currency).map((c) => c.id),
+  );
+}
+
 export function isBankAccount(card: Card): boolean {
   return card.cardType === 'bank_account';
 }
@@ -70,6 +77,19 @@ export function getCard(id: string): Card | undefined {
 
 export function getCardByName(name: string): Card | undefined {
   return data.cards.find((c) => c.name === name);
+}
+
+/**
+ * The settlement currency of the account a row names.
+ *
+ * Some screens carry an account's NAME rather than its id — the history and
+ * the checks both read from views that join it in — so the currency is looked
+ * up by that. AED where the account is unknown, which is what every account
+ * that predates the SAR bank settles in.
+ */
+export function currencyOfCardNamed(name: string | null | undefined): string {
+  if (!name) return 'AED';
+  return data.cards.find((c) => c.name === name)?.settlementCurrency ?? 'AED';
 }
 
 export function getTransactions(): Transaction[] {
@@ -93,9 +113,11 @@ export function getSpendByCurrency(cardId?: string): CurrencySpend[] {
  * to 56,365,582 JPY produces a number that looks like money and is not. A
  * caller wanting a single comparable figure must use the AED settlement column.
  */
-export function spendByCurrencyOverall(): CurrencySpend[] {
+export function spendByCurrencyOverall(settlement = 'AED'): CurrencySpend[] {
   const merged = new Map<string, CurrencySpend>();
+  const inCurrency = accountsIn(settlement);
   for (const row of data.spendByCurrency) {
+    if (!inCurrency.has(row.cardId)) continue;
     const existing = merged.get(row.currency);
     if (existing) {
       existing.count += row.count;
@@ -201,10 +223,12 @@ export interface MonthActivity {
  * received 6.8m is not a quiet month, and netting them to +110k would say it
  * was.
  */
-export function activityByMonth(limit = 6): MonthActivity[] {
+export function activityByMonth(limit = 6, currency = 'AED'): MonthActivity[] {
   const months = new Map<string, MonthActivity>();
+  const inCurrency = accountsIn(currency);
   for (const t of data.transactions) {
     if (!t.txn_date || t.entry_type !== 'source_transaction') continue;
+    if (!inCurrency.has(t.cardId)) continue;
     const key = t.txn_date.slice(0, 7);
     let m = months.get(key);
     if (!m) {
@@ -224,10 +248,12 @@ export interface SupplierSpend {
 }
 
 /** Where the money actually went, in AED — the one currency they compare in. */
-export function topSuppliers(limit = 8): SupplierSpend[] {
+export function topSuppliers(limit = 8, currency = 'AED'): SupplierSpend[] {
   const by = new Map<string, SupplierSpend>();
+  const inCurrency = accountsIn(currency);
   for (const t of data.transactions) {
     if (t.direction !== 'spend' || !t.supplier) continue;
+    if (!inCurrency.has(t.cardId)) continue;
     let s = by.get(t.supplier);
     if (!s) {
       s = { supplier: t.supplier, count: 0, aed: 0 };
@@ -432,6 +458,28 @@ export interface ResultTotals {
  * what came back. A page that shows only the spending answers a different
  * question and answers it confidently.
  */
+/**
+ * The settlement currencies present in a set of rows.
+ *
+ * The search totals add up `amount_aed`, which is the settled amount in the
+ * ACCOUNT's currency — not necessarily dirhams. A search spanning the AED
+ * cards and the SAR bank produced one figure labelled AED that was riyals
+ * added to dirhams. The panel now refuses to show a single total unless every
+ * row settles in the same currency, and says which one it is.
+ */
+export function settlementCurrenciesOf(
+  transactions: Transaction[],
+  cards: Card[],
+): string[] {
+  const byId = new Map(cards.map((c) => [c.id, c.settlementCurrency || 'AED']));
+  const present = new Set<string>();
+  for (const t of transactions) {
+    if (t.status === 'voided') continue;
+    present.add(byId.get(t.cardId) ?? 'AED');
+  }
+  return [...present].sort();
+}
+
 export function totalsFor(transactions: Transaction[]): ResultTotals {
   let spent = 0;
   let received = 0;

@@ -115,11 +115,11 @@ function BalanceHistory({
         <div className="mt-2 flex justify-between text-xs text-ink-muted">
           <span>
             {formatDateShort(points[0].date)} ·{' '}
-            <Money amount={points[0].balance} code={false} />
+            <Money currency={card.settlementCurrency} amount={points[0].balance} code={false} />
           </span>
           <span>
             {formatDateShort(points[points.length - 1].date)} ·{' '}
-            <Money amount={points[points.length - 1].balance} code={false} />
+            <Money currency={card.settlementCurrency} amount={points[points.length - 1].balance} code={false} />
           </span>
         </div>
       </div>
@@ -249,24 +249,24 @@ export function CardDetail() {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
           label="Opening balance"
-          value={<Money amount={card.openingBalance} code={false} />}
+          value={<Money currency={card.settlementCurrency} amount={card.openingBalance} code={false} />}
           hint={`On ${formatDate(card.openingDate)} — its first transaction`}
         />
         <Stat
           label="Source workbook balance"
-          value={<Money amount={card.sourceBalance} code={false} />}
+          value={<Money currency={card.settlementCurrency} amount={card.sourceBalance} code={false} />}
           hint="What the sheet's own formula chain produces"
         />
         <Stat
           label="Official live balance"
-          value={<Money amount={card.ledgerBalance} code={false} />}
+          value={<Money currency={card.settlementCurrency} amount={card.ledgerBalance} code={false} />}
           hint="Real transactions only, computed on read"
         />
         <Stat
           label="Reconciliation difference"
           value={
             hasDifference ? (
-              <Money amount={card.reconciliationDifference} code={false} />
+              <Money currency={card.settlementCurrency} amount={card.reconciliationDifference} code={false} />
             ) : (
               <span className="text-ink-muted">None</span>
             )
@@ -281,22 +281,22 @@ export function CardDetail() {
           <Notice tone="review" title="An unconfirmed adjustment sits in this balance">
             <p>
               The workbook's balance includes{' '}
-              <Money amount={card.reviewAdjustmentsTotal} signed /> with no
+              <Money currency={card.settlementCurrency} amount={card.reviewAdjustmentsTotal} signed /> with no
               transaction behind it. It is held separately and is not part of
               spend or funding.
             </p>
             <dl className="mt-2.5 max-w-sm space-y-1 text-[13px]">
               <div className="flex justify-between gap-4">
                 <dt className="text-ink-muted">Source workbook balance</dt>
-                <dd><Money amount={card.sourceBalance} code={false} /></dd>
+                <dd><Money currency={card.settlementCurrency} amount={card.sourceBalance} code={false} /></dd>
               </div>
               <div className="flex justify-between gap-4">
                 <dt className="text-ink-muted">Ledger without the adjustment</dt>
-                <dd><Money amount={card.ledgerBalance} code={false} /></dd>
+                <dd><Money currency={card.settlementCurrency} amount={card.ledgerBalance} code={false} /></dd>
               </div>
               <div className="flex justify-between gap-4 border-t border-[#e8d5ab] pt-1 font-medium">
                 <dt>Review adjustment</dt>
-                <dd><Money amount={card.reviewAdjustmentsTotal} signed code={false} /></dd>
+                <dd><Money currency={card.settlementCurrency} amount={card.reviewAdjustmentsTotal} signed code={false} /></dd>
               </div>
             </dl>
           </Notice>
@@ -419,7 +419,7 @@ export function CardDetail() {
                           )}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-right font-medium">
-                          <Money amount={t.amount_aed} signed tone="ledger" code={false} />{' '}
+                          <Money currency={card.settlementCurrency} amount={t.amount_aed} signed tone="ledger" code={false} />{' '}
                           <span className="text-xs font-normal text-ink-faint">
                             {card.settlementCurrency}
                           </span>
@@ -479,7 +479,7 @@ export function CardDetail() {
                           />
                         </td>
                         <td className="px-4 py-2 text-right text-ink-muted">
-                          <Money amount={Math.abs(s.aedTotal)} code={false} />
+                          <Money currency={card.settlementCurrency} amount={Math.abs(s.aedTotal)} code={false} />
                         </td>
                       </tr>
                     ))}

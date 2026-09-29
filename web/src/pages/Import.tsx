@@ -798,12 +798,12 @@ export function Import() {
                   </span>
                 )}
                 <span className="text-ink-muted">
-                  Spend <Money amount={-spendTotal} tone="ledger" code={false} /> · Funding <Money amount={fundingTotal} tone="ledger" code={false} />
+                  Spend <Money currency={card?.settlementCurrency ?? 'AED'} amount={-spendTotal} tone="ledger" code={false} /> · Funding <Money currency={card?.settlementCurrency ?? 'AED'} amount={fundingTotal} tone="ledger" code={false} />
                 </span>
                 {card && (
                   <span className="text-ink-muted">
-                    Balance would go from <Money amount={card.ledgerBalance} code={false} /> to{' '}
-                    <Money amount={projectBalance(card, fundingTotal - spendTotal)} tone="ledger" code={false} />
+                    Balance would go from <Money currency={card?.settlementCurrency ?? 'AED'} amount={card.ledgerBalance} code={false} /> to{' '}
+                    <Money currency={card?.settlementCurrency ?? 'AED'} amount={projectBalance(card, fundingTotal - spendTotal)} tone="ledger" code={false} />
                   </span>
                 )}
               </div>
@@ -868,7 +868,7 @@ export function Import() {
                             {row.amountAed === null ? (
                               '—'
                             ) : (
-                              <Money
+                              <Money currency={card?.settlementCurrency ?? 'AED'}
                                 amount={
                                   row.kind === 'purchase' || row.kind === 'fee'
                                     ? -row.amountAed
@@ -1001,7 +1001,7 @@ export function Import() {
                           )}
                         </td>
                         <td className="tnum px-3 py-2 text-right">
-                          {r.existing ? <Money amount={r.existing.amount_aed} code={false} /> : '—'}
+                          {r.existing ? <Money currency={card?.settlementCurrency ?? 'AED'} amount={r.existing.amount_aed} code={false} /> : '—'}
                         </td>
                         <td className="px-3 py-2 text-ink-muted">{r.current || '—'}</td>
                         <td className="px-3 py-2 font-medium text-ink">{r.value || '—'}</td>

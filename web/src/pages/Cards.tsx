@@ -57,20 +57,26 @@ export function Cards({ banks = false }: { banks?: boolean } = {}) {
                 <dl className="mt-3.5 space-y-1.5 text-[13px]">
                   <div className="flex items-baseline justify-between gap-4">
                     <dt className="text-ink-muted">Source workbook</dt>
-                    <dd><Money amount={c.sourceBalance} code={false} /></dd>
+                    <dd><Money amount={c.sourceBalance} currency={c.settlementCurrency} code={false} /></dd>
                   </div>
                   <div className="flex items-baseline justify-between gap-4">
                     <dt className="text-ink-muted">Live ledger</dt>
                     <dd className="font-semibold">
-                      <Money amount={c.ledgerBalance} code={false} />
-                      <span className="ml-1 text-xs text-ink-faint">AED</span>
+                      <Money amount={c.ledgerBalance} currency={c.settlementCurrency} code={false} />
+                      <span className="ml-1 text-xs text-ink-faint">
+                        {c.settlementCurrency}
+                      </span>
                     </dd>
                   </div>
                   {diff && (
                     <div className="flex items-baseline justify-between gap-4 border-t border-line pt-1.5">
                       <dt className="font-medium text-negative">Reconciliation difference</dt>
                       <dd className="font-medium text-negative">
-                        <Money amount={c.reconciliationDifference} code={false} />
+                        <Money
+                          amount={c.reconciliationDifference}
+                          currency={c.settlementCurrency}
+                          code={false}
+                        />
                       </dd>
                     </div>
                   )}

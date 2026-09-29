@@ -20,6 +20,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Page } from '../components/Layout';
+import { currencyOfCardNamed } from '../lib/ledger';
 import {
   Button,
   EmptyState,
@@ -138,13 +139,13 @@ export function Checks() {
                         <Tag tone="negative">{d.copies} copies</Tag>
                         <span className="text-[13px] font-medium text-ink">{d.supplier}</span>
                         <span className="tnum text-[13px]">
-                          <Money amount={num(d.amount_aed)} signed code={false} />
+                          <Money currency={currencyOfCardNamed(d.card_name)} amount={num(d.amount_aed)} signed code={false} />
                         </span>
                         <span className="text-xs text-ink-faint">
                           {d.txn_date_text} · {d.card_name}
                         </span>
                         <span className="ml-auto tnum text-[13px] text-negative">
-                          <Money amount={num(d.amount_at_risk)} code={false} /> if duplicated
+                          <Money currency={currencyOfCardNamed(d.card_name)} amount={num(d.amount_at_risk)} code={false} /> if duplicated
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-ink-muted">
@@ -188,11 +189,11 @@ export function Checks() {
                       </div>
                       <p className="mt-1 flex flex-wrap items-baseline gap-x-2 text-[13px]">
                         <span className="tnum font-medium">
-                          <Money amount={num(a.amount_aed)} signed code={false} />
+                          <Money currency={currencyOfCardNamed(a.card_name)} amount={num(a.amount_aed)} signed code={false} />
                         </span>
                         <span className="text-ink-faint">against</span>
                         <span className="tnum">
-                          <Money amount={num(a.compare_with_amount)} signed code={false} />
+                          <Money currency={currencyOfCardNamed(a.card_name)} amount={num(a.compare_with_amount)} signed code={false} />
                         </span>
                         <span className="text-xs text-ink-faint">
                           of {a.compare_with_date}
@@ -245,7 +246,7 @@ export function Checks() {
                         settled at {String(r.settled_rate)}, the month's usual is{' '}
                         {String(r.usual_rate)} over {r.comparable_rows} rows —{' '}
                         {String(r.times_usual)}× out. {String(r.original_amount)} {r.currency}{' '}
-                        became <Money amount={num(r.amount_aed)} signed code={false} />.
+                        became <Money currency={currencyOfCardNamed(r.card_name)} amount={num(r.amount_aed)} signed code={false} />.
                       </p>
                     </li>
                   ))}
@@ -275,7 +276,7 @@ export function Checks() {
                       <span className="text-ink-faint">×{d.copies}</span>
                       <span className="font-medium text-ink">{d.supplier}</span>
                       <span className="tnum">
-                        <Money amount={num(d.amount_aed)} signed code={false} />
+                        <Money currency={currencyOfCardNamed(d.card_name)} amount={num(d.amount_aed)} signed code={false} />
                       </span>
                       <span className="text-xs text-ink-faint">
                         {d.txn_date_text} · {d.card_name} · rows {d.source_rows.join(', ')}

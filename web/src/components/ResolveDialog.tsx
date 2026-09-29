@@ -102,17 +102,17 @@ export function ResolveDialog({
           <dl className="space-y-1.5 rounded-sm border border-line bg-sunken px-3 py-2.5 text-[13px]">
             <div className="flex justify-between gap-4">
               <dt className="text-ink-muted">Official live balance now</dt>
-              <dd><Money amount={card.ledgerBalance} code={false} /></dd>
+              <dd><Money amount={card.ledgerBalance} currency={card.settlementCurrency} code={false} /></dd>
             </div>
             <div className="flex justify-between gap-4">
               <dt className="text-ink-muted">This transaction</dt>
-              <dd><Money amount={t.amount_aed} signed tone="ledger" code={false} /></dd>
+              <dd><Money amount={t.amount_aed} currency={card.settlementCurrency} signed tone="ledger" code={false} /></dd>
             </div>
             <div className="flex justify-between gap-4 border-t border-line pt-1.5 font-medium">
               <dt>{changes ? 'Balance after this change' : 'Balance is unchanged'}</dt>
               <dd className="text-base font-semibold">
-                <Money amount={projected} code={false} />
-                <span className="ml-1 text-xs text-ink-faint">AED</span>
+                <Money amount={projected} currency={card.settlementCurrency} code={false} />
+                <span className="ml-1 text-xs text-ink-faint">{card.settlementCurrency}</span>
               </dd>
             </div>
           </dl>

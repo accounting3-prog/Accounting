@@ -141,7 +141,12 @@ export function TransactionDrawer({
               Effect on balance
             </div>
             <div className="mt-1 text-2xl font-semibold">
-              <Money amount={t.amount_aed} signed tone="ledger" />
+              <Money
+                amount={t.amount_aed}
+                currency={card?.settlementCurrency ?? 'AED'}
+                signed
+                tone="ledger"
+              />
             </div>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               <StatusPill status={t.status} />
@@ -212,8 +217,13 @@ export function TransactionDrawer({
               </Row>
             )}
             <Row label="Card">{card?.name ?? '—'}</Row>
-            <Row label="AED settlement">
-              <Money amount={t.amount_aed} signed tone="ledger" />
+            <Row label={`${card?.settlementCurrency ?? 'AED'} settlement`}>
+              <Money
+                amount={t.amount_aed}
+                currency={card?.settlementCurrency ?? 'AED'}
+                signed
+                tone="ledger"
+              />
             </Row>
             {t.req_number && <Row label="Request number">{t.req_number}</Row>}
             {t.payment_ref && <Row label="Payment reference">{t.payment_ref}</Row>}

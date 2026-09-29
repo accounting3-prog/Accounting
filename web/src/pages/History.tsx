@@ -31,6 +31,7 @@ import {
   fieldClass,
 } from '../components/ui';
 import { listActivity, type ActivityRow } from '../lib/api';
+import { currencyOfCardNamed } from '../lib/ledger';
 import { useLedgerState } from '../components/LedgerProvider';
 
 const AREA_LABEL: Record<string, string> = {
@@ -241,7 +242,12 @@ export function History() {
                       </span>
                       {r.amount_aed !== null && (
                         <span className="tnum text-[13px]">
-                          <Money amount={Number(r.amount_aed)} signed code={false} />
+                          <Money
+                            amount={Number(r.amount_aed)}
+                            currency={currencyOfCardNamed(r.card_name)}
+                            signed
+                            code={false}
+                          />
                         </span>
                       )}
                       {r.card_name && r.area === 'transaction' && (

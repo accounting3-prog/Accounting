@@ -159,7 +159,7 @@ export function ReviewQueue() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <Money amount={t.amount_aed} signed tone="ledger" />
+                        <Money currency={card.settlementCurrency} amount={t.amount_aed} signed tone="ledger" />
                         <div className="mt-0.5 text-xs text-ink-faint">
                           effect on balance
                         </div>
@@ -172,15 +172,15 @@ export function ReviewQueue() {
                       <dl className="mt-3 max-w-md space-y-1 rounded-sm border border-line bg-sunken px-3 py-2.5 text-[13px]">
                         <div className="flex justify-between gap-4">
                           <dt className="text-ink-muted">Source workbook balance</dt>
-                          <dd><Money amount={card.sourceBalance} code={false} /></dd>
+                          <dd><Money currency={card.settlementCurrency} amount={card.sourceBalance} code={false} /></dd>
                         </div>
                         <div className="flex justify-between gap-4">
                           <dt className="text-ink-muted">This transaction</dt>
-                          <dd><Money amount={t.amount_aed} signed tone="ledger" code={false} /></dd>
+                          <dd><Money currency={card.settlementCurrency} amount={t.amount_aed} signed tone="ledger" code={false} /></dd>
                         </div>
                         <div className="flex justify-between gap-4 border-t border-line pt-1 font-medium">
                           <dt>Ledger balance including it</dt>
-                          <dd><Money amount={card.ledgerBalance} code={false} /></dd>
+                          <dd><Money currency={card.settlementCurrency} amount={card.ledgerBalance} code={false} /></dd>
                         </div>
                       </dl>
                     )}
@@ -189,15 +189,15 @@ export function ReviewQueue() {
                       <dl className="mt-3 max-w-md space-y-1 rounded-sm border border-line bg-sunken px-3 py-2.5 text-[13px]">
                         <div className="flex justify-between gap-4">
                           <dt className="text-ink-muted">Source workbook balance</dt>
-                          <dd><Money amount={card.sourceBalance} code={false} /></dd>
+                          <dd><Money currency={card.settlementCurrency} amount={card.sourceBalance} code={false} /></dd>
                         </div>
                         <div className="flex justify-between gap-4">
                           <dt className="text-ink-muted">Ledger without this adjustment</dt>
-                          <dd><Money amount={card.ledgerBalance} code={false} /></dd>
+                          <dd><Money currency={card.settlementCurrency} amount={card.ledgerBalance} code={false} /></dd>
                         </div>
                         <div className="flex justify-between gap-4 border-t border-line pt-1 font-medium">
                           <dt>Unexplained difference</dt>
-                          <dd><Money amount={t.amount_aed} signed tone="ledger" code={false} /></dd>
+                          <dd><Money currency={card.settlementCurrency} amount={t.amount_aed} signed tone="ledger" code={false} /></dd>
                         </div>
                       </dl>
                     )}
@@ -308,7 +308,7 @@ export function ReviewQueue() {
                           {t.lpo_number ?? '—'}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2.5 text-right">
-                          <Money amount={t.amount_aed} signed tone="ledger" code={false} />
+                          <Money currency={card.settlementCurrency} amount={t.amount_aed} signed tone="ledger" code={false} />
                         </td>
                         <td className="px-4 py-2.5">
                           <StatusPill status={t.status} />
