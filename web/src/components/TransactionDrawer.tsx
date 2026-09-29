@@ -9,7 +9,12 @@
 
 import { useEffect, useState } from 'react';
 import { formatDate, formatRate, humanise } from '../lib/format';
-import { REVIEW_KIND_LABEL, findDuplicateCandidates, reviewKind } from '../lib/ledger';
+import {
+  REVIEW_KIND_LABEL,
+  findDuplicateCandidates,
+  isBankAccount,
+  reviewKind,
+} from '../lib/ledger';
 import { currencyName } from '../lib/currencies';
 import type { Card, Transaction } from '../lib/types';
 import { Money, Notice, StatusPill, Tag } from './ui';
@@ -63,6 +68,16 @@ export function TransactionDrawer({
   if (!transaction) return null;
   const t = transaction;
   const isAdjustment = t.entry_type === 'reconciliation_adjustment';
+  /**
+   * A line on a bank statement is not ours to take off the balance. Removing
+   * one would put the ledger out against the bank by that amount, and the
+   * reconciliation that should have caught it would report a difference with
+   * nothing to explain it. The database refuses the call; this only stops
+   * offering it, so nobody reaches for something that cannot work.
+   */
+  // Not knowing which account a row belongs to counts as not offering it:
+  // the one case where guessing wrong offers something the database refuses.
+  const isBank = !card || isBankAccount(card);
   const duplicates = findDuplicateCandidates(t).filter((d) => d.id !== t.id);
 
   return (
@@ -106,7 +121,7 @@ export function TransactionDrawer({
               rather than what it is called: nobody looking to remove a row
               searches for the word "resolve".
             */}
-            {canEdit && onRemove && t.status !== 'voided' && (
+            {canEdit && onRemove && !isBank && t.status !== 'voided' && (
               <button
                 type="button"
                 onClick={() => onRemove(t)}
@@ -115,7 +130,7 @@ export function TransactionDrawer({
                 Remove from the balance
               </button>
             )}
-            {canEdit && onRestore && t.status === 'voided' && (
+            {canEdit && onRestore && !isBank && t.status === 'voided' && (
               <button
                 type="button"
                 onClick={() => onRestore(t)}

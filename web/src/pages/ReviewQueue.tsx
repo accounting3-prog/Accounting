@@ -7,7 +7,7 @@ import { ResolveDialog, type ResolveRequest } from '../components/ResolveDialog'
 import { useLedgerState } from '../components/LedgerProvider';
 import type { ResolveAction } from '../lib/api';
 import { formatDate } from '../lib/format';
-import { REVIEW_KIND_LABEL, getCards, getReviewItems } from '../lib/ledger';
+import { REVIEW_KIND_LABEL, getCards, getReviewItems, isBankAccount } from '../lib/ledger';
 import type { ReviewKind, Transaction } from '../lib/types';
 
 /**
@@ -203,7 +203,16 @@ export function ReviewQueue() {
                     )}
 
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {ACTIONS[kind].map((spec, i) => (
+                      {ACTIONS[kind]
+                        /*
+                          A line on a bank statement cannot be taken off the
+                          balance — the database refuses it, because the ledger
+                          has to agree with the bank. Offering the button
+                          anyway would be exactly the decoration this file
+                          opens by arguing against.
+                        */
+                        .filter((spec) => spec.action !== 'void' || !isBankAccount(card))
+                        .map((spec, i) => (
                         <Button
                           key={spec.label}
                           variant={
