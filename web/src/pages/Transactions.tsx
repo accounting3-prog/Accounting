@@ -296,7 +296,7 @@ export function Transactions() {
               >
                 <option value="">Not filtered</option>
                 <option value="payment_ref">No payment reference</option>
-                <option value="req_number">No request number</option>
+                <option value="req_number">No request number (money out)</option>
                 <option value="invoice">No invoice</option>
                 <option value="lpo_number">No LPO number</option>
                 <option value="currency">No original currency</option>

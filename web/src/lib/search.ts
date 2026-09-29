@@ -77,7 +77,7 @@ export type MissingField = '' | 'payment_ref' | 'req_number' | 'invoice' | 'lpo_
 
 export const MISSING_LABEL: Record<Exclude<MissingField, ''>, string> = {
   payment_ref: 'payment reference',
-  req_number: 'request number',
+  req_number: 'request number, on money going out',
   invoice: 'invoice',
   lpo_number: 'LPO number',
   currency: 'original currency',
@@ -148,7 +148,14 @@ export function applyFilters(
     if (f.dateTo && (!t.txn_date || t.txn_date > f.dateTo)) return false;
 
     if (f.missing === 'payment_ref' && !isBlank(t.payment_ref)) return false;
-    if (f.missing === 'req_number' && !isBlank(t.req_number)) return false;
+    // Money going out, only.
+    //
+    // A payment is made against a request; money arriving is not. Matching
+    // every blank returned 497 rows of which 101 were payments — the other 396
+    // were incoming transfers that will never carry a reference and were
+    // burying the ones that should.
+    if (f.missing === 'req_number' && (!isBlank(t.req_number) || t.amount_aed >= 0))
+      return false;
     if (f.missing === 'invoice' && !isBlank(t.invoice)) return false;
     if (f.missing === 'lpo_number' && !isBlank(t.lpo_number)) return false;
     if (f.missing === 'currency' && !isBlank(t.currency)) return false;
