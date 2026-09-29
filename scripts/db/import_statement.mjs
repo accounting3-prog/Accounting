@@ -31,7 +31,16 @@ const live = process.argv.includes('--live');
 const STATEMENT =
   process.env.STATEMENT ??
   `${process.env.USERPROFILE ?? process.env.HOME}/Downloads/Account Statement_29-09-2026 09_47_46.xlsx`;
-const ACCOUNT = process.env.ACCOUNT ?? 'BANK KSA (SAB 7631)';
+/**
+ * The account this statement belongs to, named from the statement itself
+ * unless one is given.
+ *
+ * The bank's accounts differ only in the last digits of the number and in the
+ * currency — 036677631001 is the riyal account, 036677631081 the euro one —
+ * so the name carries both. ACCOUNT overrides it for an account already in the
+ * ledger under a different name.
+ */
+const ACCOUNT_OVERRIDE = process.env.ACCOUNT ?? null;
 
 const money = (n) =>
   Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -47,20 +56,123 @@ const client = await connect();
 
 try {
   console.log('='.repeat(100));
-  console.log(`${live ? 'LIVE' : 'DRY RUN'}  ${ACCOUNT}`);
+  console.log(`${live ? 'LIVE' : 'DRY RUN'}`);
   console.log('='.repeat(100));
   console.log(`\n  ${STATEMENT}\n`);
 
+  /* ------------------------------------------------ what the bank itself says */
+
+  const sheet = parseXlsx(new Uint8Array(readFileSync(STATEMENT)))[0];
+
+  /** A labelled fact from the statement's header block. */
+  const meta = (label) => {
+    const row = sheet.rows.find((r) => String(r[1] ?? '').trim().startsWith(label));
+    return row ? String(row[2] ?? '').trim() : null;
+  };
+  const accountNumber = meta('Account Number') ?? '';
+  const statedCurrency = (meta('Currency') ?? 'SAR').toUpperCase();
+  // Every account at this bank shares one customer number and differs only in
+  // the last digits — ...631001 is the riyal account, ...631081 the euro one —
+  // so the last four are what name and find an account, not the whole number,
+  // which create_card refuses to store.
+  const tail = accountNumber.slice(-4);
+  const ACCOUNT = ACCOUNT_OVERRIDE ?? `BANK KSA ${statedCurrency} (SAB ${tail})`;
+  const ISSUER = 'Saudi Awwal Bank (SAB)';
+
+  // "From: 01/09/2026" — the day the opening balance below is stated for.
+  const period = sheet.rows
+    .flat()
+    .map((c) => /From:\s*(\d{2})\/(\d{2})\/(\d{4})/.exec(String(c ?? '')))
+    .find(Boolean);
+  const periodStart = period ? `${period[3]}-${period[2]}-${period[1]}` : null;
+
+  const summary = sheet.rows[
+    sheet.rows.findIndex((r) => r.some((c) => /Total Credits/i.test(String(c ?? '')))) + 1
+  ] ?? [];
+  const bank = {
+    transactions: figure(summary[1]),
+    creditValue: figure(summary[3]), debitValue: figure(summary[5]),
+    opening: figure(summary[6]), closing: figure(summary[7]),
+  };
+
+  console.log(`  account ${accountNumber}, in ${statedCurrency}`);
+  console.log(`  the bank states: ${bank.transactions} transactions from ${periodStart ?? '?'} to the report date,`);
+  console.log(`                   opening ${money(bank.opening)}, closing ${money(bank.closing)} ${statedCurrency}\n`);
+
   const [owner] = await q(client, 'select user_id from admins where is_owner limit 1');
-  const [cardRow] = await q(
-    client,
-    `select c.id, c.name, c.settlement_currency, c.balance_sign, c.card_type, c.tracks_balance,
-            c.opening_balance::float8 ob, to_char(c.opening_date,'YYYY-MM-DD') od,
-            c.source_header_row, c.decreasing_column, c.decreasing_header,
-            c.increasing_column, c.increasing_header, c.balance_formula
-       from cards c where c.name = $1`,
-    [ACCOUNT],
-  );
+
+  // Everything from here on — including creating the account, when the
+  // statement is for one the ledger has never seen — happens inside a single
+  // transaction, so a dry run leaves nothing behind, not even the account.
+  await client.query('begin');
+  await client.query('set local role authenticated');
+  await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [owner.user_id]);
+
+  /* ------------------------------------------- which account this belongs to */
+
+  const COLUMNS = `c.id, c.name, c.settlement_currency, c.balance_sign, c.card_type,
+                   c.tracks_balance, c.opening_balance::float8 ob,
+                   to_char(c.opening_date,'YYYY-MM-DD') od,
+                   c.source_header_row, c.decreasing_column, c.decreasing_header,
+                   c.increasing_column, c.increasing_header, c.balance_formula`;
+  const find = (where, params) =>
+    q(client, `select ${COLUMNS} from cards c where ${where}`, params);
+
+  // Three ways of recognising the account, narrowest first. The third exists
+  // because the riyal account was named and referenced by hand before this
+  // script generated either: at this bank there is one account per currency,
+  // so issuer and currency together name exactly one.
+  let [cardRow] = await find('c.name = $1', [ACCOUNT]);
+  if (!cardRow)
+    [cardRow] = await find(
+      `c.account_reference is not null and $1 like '%' || c.account_reference`,
+      [accountNumber],
+    );
+  if (!cardRow) {
+    const same = await find(
+      `c.bank_issuer = $1 and c.settlement_currency = $2 and c.status = 'active'`,
+      [ISSUER, statedCurrency],
+    );
+    if (same.length === 1) [cardRow] = same;
+  }
+
+  if (!cardRow) {
+    // The statement carries everything a new account needs: its currency, the
+    // balance it opened at, and the day that figure is stated for. Taking them
+    // from the statement rather than typing them is what makes the closing
+    // balance below a real check — nothing about the account was chosen to
+    // make it come out right.
+    if (!periodStart)
+      throw new Error('the statement does not state the period it covers, so the opening date is unknown');
+    console.log(`  the ledger has no account for this statement — creating ${ACCOUNT}`);
+    console.log(`    ${statedCurrency}, opening ${money(bank.opening)} on ${periodStart}\n`);
+    const [{ create_card: newId }] = await q(
+      client,
+      `select create_card(
+          p_name := $1, p_opening_balance := $2, p_opening_date := $3,
+          p_card_type := 'bank_account', p_status := 'active',
+          p_settlement_currency := $4, p_bank_issuer := $5,
+          p_account_reference := $6, p_balance_sign := 1::smallint)`,
+      [ACCOUNT, bank.opening, periodStart, statedCurrency, ISSUER, tail],
+    );
+    [cardRow] = await find('c.id = $1', [newId]);
+    check('the new account tracks a balance, as a bank account must',
+          cardRow.tracks_balance !== false);
+    check('the new account settles in the statement currency',
+          cardRow.settlement_currency === statedCurrency,
+          `${cardRow.settlement_currency} vs ${statedCurrency}`);
+  } else {
+    console.log(`  this statement belongs to ${cardRow.name}\n`);
+    // A statement in one currency must never be posted to an account that
+    // settles in another: that is how one currency's figures end up inside
+    // another's total.
+    check('the account settles in the currency the statement is written in',
+          cardRow.settlement_currency === statedCurrency,
+          `the account is ${cardRow.settlement_currency}, the statement ${statedCurrency}`);
+    if (cardRow.settlement_currency !== statedCurrency)
+      throw new Error('this statement is not written in the account currency');
+  }
+
   const card = {
     id: cardRow.id, name: cardRow.name,
     settlementCurrency: cardRow.settlement_currency,
@@ -77,19 +189,9 @@ try {
     headerIsMisleading: false, verifiedRows: 0,
   };
 
-  /* ------------------------------------------------ what the bank itself says */
+  /* --------------------------------------- read the statement as the UI does */
 
-  const sheet = parseXlsx(new Uint8Array(readFileSync(STATEMENT)))[0];
   const analysis = analyseSheet(sheet, card);
-  const summary = sheet.rows[
-    sheet.rows.findIndex((r) => r.some((c) => /Total Credits/i.test(String(c ?? '')))) + 1
-  ] ?? [];
-  const bank = {
-    transactions: figure(summary[1]),
-    creditValue: figure(summary[3]), debitValue: figure(summary[5]),
-    opening: figure(summary[6]), closing: figure(summary[7]),
-  };
-  console.log(`  the bank states: ${bank.transactions} transactions, closing ${money(bank.closing)} ${card.settlementCurrency}\n`);
 
   const existing = await q(
     client,
@@ -111,10 +213,6 @@ try {
   check('no row is refused', refused.length === 0, refused[0]?.errors[0] ?? '');
 
   /* ------------------------------------------------------------- write them */
-
-  await client.query('begin');
-  await client.query('set local role authenticated');
-  await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [owner.user_id]);
 
   const before = (await q(client,
     `select ledger_balance::float8 l, transaction_count::int n from card_balances where card_id = $1`,
