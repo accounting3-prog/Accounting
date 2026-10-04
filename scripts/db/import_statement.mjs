@@ -96,6 +96,30 @@ try {
     .find(Boolean);
   const periodStart = period ? `${period[3]}-${period[2]}-${period[1]}` : null;
 
+  // Not every statement prints its period: the euro one did, the dollar one
+  // does not. When it is missing, the earliest day in the statement's own
+  // transaction table is the next fact about when the opening balance applied
+  // — and it is on the statement, which a date typed in here would not be.
+  // Refusing would be safe but useless; inventing one would not be safe.
+  const earliestListed = (() => {
+    const head = sheet.rows.findIndex((r) =>
+      r.some((c) => /^Transaction Date$/i.test(String(c ?? '').trim())),
+    );
+    if (head < 0) return null;
+    const col = sheet.rows[head].findIndex((c) => /^Transaction Date$/i.test(String(c ?? '').trim()));
+    const days = sheet.rows
+      .slice(head + 1)
+      .map((r) => /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(r[col] ?? '').trim()))
+      .filter(Boolean)
+      .map((m) => `${m[3]}-${m[2]}-${m[1]}`)
+      .sort();
+    return days[0] ?? null;
+  })();
+  const openingDate = periodStart ?? earliestListed;
+  const openingFrom = periodStart
+    ? 'the period the statement prints'
+    : 'the earliest transaction it lists, since it prints no period';
+
   // The bank's summary line, read by the words printed above each number and
   // not by where the number sits. A column added, dropped or reordered would
   // otherwise move every figure along by one and be silent about it: the
@@ -134,7 +158,7 @@ try {
     throw new Error('the summary line was not read correctly — refusing to import against it');
 
   console.log(`  account ${accountNumber}, in ${statedCurrency}`);
-  console.log(`  the bank states: ${bank.transactions} transactions from ${periodStart ?? '?'} to the report date,`);
+  console.log(`  the bank states: ${bank.transactions} transactions from ${openingDate ?? '?'} to the report date,`);
   console.log(`                   opening ${money(bank.opening)}, closing ${money(bank.closing)} ${statedCurrency}\n`);
 
   const [owner] = await q(client, 'select user_id from admins where is_owner limit 1');
@@ -180,10 +204,11 @@ try {
     // from the statement rather than typing them is what makes the closing
     // balance below a real check — nothing about the account was chosen to
     // make it come out right.
-    if (!periodStart)
-      throw new Error('the statement does not state the period it covers, so the opening date is unknown');
+    if (!openingDate)
+      throw new Error('the statement states neither its period nor any dated transaction, so the opening date is unknown');
     console.log(`  the ledger has no account for this statement — creating ${ACCOUNT}`);
-    console.log(`    ${statedCurrency}, opening ${money(bank.opening)} on ${periodStart}\n`);
+    console.log(`    ${statedCurrency}, opening ${money(bank.opening)} on ${openingDate}`);
+    console.log(`    (the date is ${openingFrom})\n`);
     const [{ create_card: newId }] = await q(
       client,
       `select create_card(
@@ -191,7 +216,7 @@ try {
           p_card_type := 'bank_account', p_status := 'active',
           p_settlement_currency := $4, p_bank_issuer := $5,
           p_account_reference := $6, p_balance_sign := 1::smallint)`,
-      [ACCOUNT, bank.opening, periodStart, statedCurrency, ISSUER, tail],
+      [ACCOUNT, bank.opening, openingDate, statedCurrency, ISSUER, tail],
     );
     [cardRow] = await find('c.id = $1', [newId]);
     check('the new account tracks a balance, as a bank account must',
