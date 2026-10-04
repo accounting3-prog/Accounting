@@ -101,6 +101,11 @@ export interface Transaction {
 
   /** Signed against the balance: spend negative, funding positive. */
   amount_aed: number;
+  /**
+   * The running balance the bank printed beside this line, on rows imported
+   * from a bank statement. What a period on a bank account is checked against.
+   */
+  statement_balance?: number | null;
   direction?: TxnDirection;
   included_in_source_balance?: boolean;
 

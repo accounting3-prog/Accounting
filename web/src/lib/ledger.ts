@@ -529,3 +529,79 @@ export function totalsFor(transactions: Transaction[]): ResultTotals {
       .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)),
   };
 }
+
+/* ------------------------------------------- a stretch of days on a bank */
+
+/**
+ * A bank account over a range of days, the way the bank itself shows it.
+ *
+ * Filtering the transactions to a month and adding them up gives the month's
+ * movement — money out less money in — which is a real figure but not the one
+ * anyone checks a bank account against. The bank's question is: what was the
+ * balance when the month began, what was it when the month ended, and does the
+ * second one match what the statement printed. That is what this answers.
+ *
+ * Opening and closing are computed from every row on the account, not from
+ * the rows on screen: a search that hides half the month must not change what
+ * the balance was on the 1st.
+ */
+export interface BankPeriod {
+  from: string;
+  to: string;
+  opening: number;
+  paidOut: number;
+  cameIn: number;
+  closing: number;
+  /** The last day in the range that has any movement — what the bank printed against. */
+  lastDay: string | null;
+  /**
+   * Whether the bank printed this closing balance on that day. Null when the
+   * rows carry no printed balance to compare with, which is not the same as
+   * disagreeing.
+   */
+  bankAgrees: boolean | null;
+}
+
+export function bankPeriod(card: Card, from: string, to: string): BankPeriod {
+  const rows = data.transactions.filter(
+    (t) => t.cardId === card.id && t.status !== 'voided' && t.txn_date,
+  );
+  let opening = card.openingBalance;
+  let paidOut = 0;
+  let cameIn = 0;
+  let lastDay: string | null = null;
+
+  for (const t of rows) {
+    const d = t.txn_date as string;
+    if (d < from) opening += t.amount_aed;
+    else if (d <= to) {
+      // The sign is carried by the amount: money out is stored negative.
+      if (t.amount_aed < 0) paidOut += -t.amount_aed;
+      else cameIn += t.amount_aed;
+      if (!lastDay || d > lastDay) lastDay = d;
+    }
+  }
+  const closing = opening - paidOut + cameIn;
+
+  // The bank's figure for the end of that day is one of the balances it
+  // printed that day — the last one. Checking that the computed closing is
+  // among them asks the same question without needing the order of the rows
+  // within the day, which the ledger does not always know.
+  let bankAgrees: boolean | null = null;
+  if (lastDay) {
+    const printed = rows
+      .filter((t) => t.txn_date === lastDay && t.statement_balance != null)
+      .map((t) => Number(t.statement_balance));
+    if (printed.length) bankAgrees = printed.some((b) => Math.abs(b - closing) < 0.005);
+  }
+
+  return {
+    from, to,
+    opening: round2(opening),
+    paidOut: round2(paidOut),
+    cameIn: round2(cameIn),
+    closing: round2(closing),
+    lastDay,
+    bankAgrees,
+  };
+}

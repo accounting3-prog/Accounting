@@ -16,9 +16,11 @@ import {
 } from '../components/ui';
 import { formatCount, formatDateShort, formatRate } from '../lib/format';
 import { exportCsv, exportFilename, exportXlsx, exportXlsxByCard } from '../lib/export';
-import { getCards, getTransactions,
+import { bankPeriod, getCards, getTransactions,
+  isBankAccount,
   settlementCurrenciesOf,
   totalsFor,
+  type BankPeriod,
   type ResultTotals,
 } from '../lib/ledger';
 import {
@@ -122,6 +124,35 @@ export function Transactions() {
     () => settlementCurrenciesOf(results, cards),
     [results, cards],
   );
+
+  /** Filters that narrow the rows by something other than account and date. */
+  const narrowedBeyondDates =
+    filters.query.trim() !== '' ||
+    filters.currencies.length > 0 ||
+    filters.statuses.length > 0 ||
+    filters.kinds.length > 0 ||
+    filters.suppliers.length > 0 ||
+    filters.source !== 'all' ||
+    filters.missing !== '';
+
+  /**
+   * The one bank account on screen, if that is what the view is narrowed to.
+   * A bank whose balance is not tracked has no opening or closing to show.
+   */
+  const periodCard = useMemo(() => {
+    const ids = new Set(results.map((t) => t.cardId));
+    if (ids.size !== 1) return null;
+    const card = cards.find((c) => ids.has(c.id));
+    return card && isBankAccount(card) && card.tracksBalance !== false ? card : null;
+  }, [results, cards]);
+
+  const period = useMemo<BankPeriod | null>(() => {
+    if (!periodCard) return null;
+    const dates = results.map((t) => t.txn_date ?? '').filter(Boolean).sort();
+    const from = filters.dateFrom || dates[0];
+    const to = filters.dateTo || dates[dates.length - 1];
+    return from && to ? bankPeriod(periodCard, from, to) : null;
+  }, [periodCard, results, filters.dateFrom, filters.dateTo]);
 
   const update = (patch: Partial<Filters>) => {
     setFilters((f) => ({ ...f, ...patch }));
@@ -234,7 +265,18 @@ export function Transactions() {
 
            the whole ledger is a number nobody asked for. */}
 
-      {isFiltered(filters) && results.length > 0 && (
+      {/* On one bank account the question is the bank's: what was the
+          balance when the range began and when it ended, and does the end
+          match what the statement printed. The month's net movement answers
+          a different question, and labelled "Net cost" it read as a balance
+          that was simply wrong. */}
+      {period && <BankPeriodBar period={period} currency={periodCard!.settlementCurrency} />}
+
+      {/* The rows-on-screen total. On a bank account it is only shown once
+          the view is narrowed beyond the account and the dates — by a search,
+          a status, a missing field — because then it answers "what do these
+          rows come to", which the bank figures above do not. */}
+      {isFiltered(filters) && results.length > 0 && (!period || narrowedBeyondDates) && (
 
         <ResultTotal totals={totals} currencies={resultCurrencies} />
 
@@ -566,6 +608,54 @@ export function Transactions() {
       />
 
     </Page>
+  );
+}
+
+/**
+ * One bank account over the chosen days, laid out as the statement lays it
+ * out: the balance going in, what left, what arrived, the balance coming out.
+ *
+ * The closing figure is then checked against the balance the bank printed on
+ * the last day of the range. That check is the reason to look at a bank
+ * account by month at all, so it is said in words, not left to be worked out.
+ */
+function BankPeriodBar({ period, currency }: { period: BankPeriod; currency: string }) {
+  const Fig = ({ label, value, strong }: { label: string; value: number; strong?: boolean }) => (
+    <div className={`flex flex-col rounded-sm px-2.5 py-1.5 ${strong ? 'bg-sunken' : ''}`}>
+      <span className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">{label}</span>
+      <span className={`tnum ${strong ? 'text-lg font-semibold' : 'text-[15px]'}`}>
+        <Money amount={value} currency={currency} code={false} />
+        <span className="ml-1 text-xs font-normal text-ink-faint">{currency}</span>
+      </span>
+    </div>
+  );
+
+  return (
+    <div className="mb-4 rounded-md border border-line bg-surface px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Fig label={`Opening · ${formatDateShort(period.from)}`} value={period.opening} />
+        <span className="text-ink-faint">−</span>
+        <Fig label="Paid out" value={period.paidOut} />
+        <span className="text-ink-faint">+</span>
+        <Fig label="Came in" value={period.cameIn} />
+        <span className="text-ink-faint">=</span>
+        <Fig label={`Closing · ${formatDateShort(period.to)}`} value={period.closing} strong />
+      </div>
+      <p
+        className={`mt-2 border-t border-line-soft pt-2 text-[13px] ${
+          period.bankAgrees === false ? 'text-negative' : period.bankAgrees ? 'text-positive' : 'text-ink-muted'
+        }`}
+      >
+        {period.bankAgrees === null
+          ? 'There is no balance printed by the bank in these days to compare with.'
+          : period.bankAgrees
+            ? `Matches the balance the bank printed on ${formatDateShort(period.lastDay!)}.`
+            : `Does not match any balance the bank printed on ${formatDateShort(period.lastDay!)} — a row is missing, doubled or wrong.`}
+        <span className="ml-1 text-ink-faint">
+          Worked out from every row on the account, not only the rows a search leaves on screen.
+        </span>
+      </p>
+    </div>
   );
 }
 
