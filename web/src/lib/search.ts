@@ -71,6 +71,28 @@ export interface Filters {
    * same shape works for any field that is optional but wanted eventually.
    */
   missing: MissingField;
+  /**
+   * Bank charges, which are marked BAC in the request number.
+   *
+   * 'only' answers "what did the bank charge us"; 'hide' takes them out so
+   * the payments that need a real request number are not buried under
+   * hundreds of half-riyal fees.
+   */
+  bac: BacFilter;
+}
+
+export type BacFilter = '' | 'only' | 'hide';
+
+/**
+ * Whether a row is a bank charge.
+ *
+ * Case does not matter: the ledger holds it as BAC, bac and Bac — 542, 406
+ * and 1 rows — because some were typed by hand and some were filled in by the
+ * importer. They are the same mark, and a filter that only knew one spelling
+ * would quietly leave out four in ten.
+ */
+export function isBankCharge(t: Transaction): boolean {
+  return (t.req_number ?? '').trim().toUpperCase() === 'BAC';
 }
 
 export type MissingField = '' | 'payment_ref' | 'req_number' | 'invoice' | 'lpo_number' | 'currency';
@@ -97,6 +119,7 @@ export const EMPTY_FILTERS: Filters = {
   dateTo: '',
   source: 'all',
   missing: '',
+  bac: '',
 };
 
 export function isFiltered(f: Filters): boolean {
@@ -110,7 +133,8 @@ export function isFiltered(f: Filters): boolean {
     f.dateFrom !== '' ||
     f.dateTo !== '' ||
     f.source !== 'all' ||
-    f.missing !== ''
+    f.missing !== '' ||
+    f.bac !== ''
   );
 }
 
@@ -159,6 +183,9 @@ export function applyFilters(
     if (f.missing === 'invoice' && !isBlank(t.invoice)) return false;
     if (f.missing === 'lpo_number' && !isBlank(t.lpo_number)) return false;
     if (f.missing === 'currency' && !isBlank(t.currency)) return false;
+
+    if (f.bac === 'only' && !isBankCharge(t)) return false;
+    if (f.bac === 'hide' && isBankCharge(t)) return false;
 
     if (f.source !== 'all') {
       // Everything currently in the ledger came from the workbook; a row with

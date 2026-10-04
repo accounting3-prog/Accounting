@@ -133,7 +133,8 @@ export function Transactions() {
     filters.kinds.length > 0 ||
     filters.suppliers.length > 0 ||
     filters.source !== 'all' ||
-    filters.missing !== '';
+    filters.missing !== '' ||
+    filters.bac !== '';
 
   /**
    * The one bank account on screen, if that is what the view is narrowed to.
@@ -356,6 +357,17 @@ export function Transactions() {
                   Only that column is written.
                 </p>
               )}
+
+              <span className={`${labelClass} mt-3 block`}>Bank charges (BAC)</span>
+              <select
+                value={filters.bac}
+                onChange={(e) => update({ bac: e.target.value as Filters['bac'] })}
+                className={`${fieldClass} mt-1.5`}
+              >
+                <option value="">Show them</option>
+                <option value="only">Only BAC</option>
+                <option value="hide">Hide BAC</option>
+              </select>
             </div>
 
             <div>

@@ -60,6 +60,8 @@ export function exportFilename(
       parts.push(`${filters.cardIds.length}-cards`);
     }
     if (filters.missing) parts.push(`missing ${filters.missing.replace(/_/g, ' ')}`);
+    if (filters.bac === 'only') parts.push('BAC');
+    if (filters.bac === 'hide') parts.push('without BAC');
     if (filters.currencies.length === 1) parts.push(filters.currencies[0]);
     if (filters.statuses.length === 1) parts.push(filters.statuses[0].replace(/_/g, '-'));
     if (filters.dateFrom || filters.dateTo)
@@ -183,6 +185,8 @@ export function filterSummary(
   if (filters.dateTo) bits.push(`to ${filters.dateTo}`);
   if (filters.source !== 'all') bits.push(`source: ${filters.source}`);
   if (filters.missing) bits.push(`missing the ${filters.missing.replace(/_/g, ' ')}`);
+  if (filters.bac === 'only') bits.push('bank charges (BAC) only');
+  if (filters.bac === 'hide') bits.push('bank charges (BAC) left out');
   return `${count} transaction${count === 1 ? '' : 's'}${
     bits.length ? ` — ${bits.join('; ')}` : ' — no filters applied'
   }`;
