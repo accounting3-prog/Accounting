@@ -2,7 +2,11 @@ import { Link } from 'react-router-dom';
 import { Page } from '../components/Layout';
 import { Button, Money, Panel, Tag } from '../components/ui';
 import { formatCount, formatDate } from '../lib/format';
-import { getCards, getSpendByCurrency, isBankAccount } from '../lib/ledger';
+import { useState } from 'react';
+import { getCards, getSpendByCurrency, getTransactions, isBankAccount } from '../lib/ledger';
+import { buildBankWorkbook } from '../lib/bankWorkbook';
+import { downloadBlob } from '../lib/export';
+import type { Card } from '../lib/types';
 
 /**
  * The payment cards, and the bank accounts, as two screens over one list.
@@ -23,9 +27,12 @@ export function Cards({ banks = false }: { banks?: boolean } = {}) {
           : 'One account per sheet in the source workbook. Names are kept exactly as the workbook writes them.'
       }
       actions={
-        <Link to="/cards/new">
-          <Button variant="primary">{banks ? 'Add an account' : 'Add a card'}</Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          {banks && <ExportReconciliation cards={cards} />}
+          <Link to="/cards/new">
+            <Button variant="primary">{banks ? 'Add an account' : 'Add a card'}</Button>
+          </Link>
+        </div>
       }
     >
       <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
@@ -103,5 +110,43 @@ export function Cards({ banks = false }: { banks?: boolean } = {}) {
         })}
       </div>
     </Page>
+  );
+}
+
+/**
+ * The bank accounts as the reconciliation sheet they are kept in: one tab per
+ * month per account, an opening balance at the top of each, BALANCE carried
+ * down by formula, in the hand-kept sheet's own fonts, borders and colours.
+ *
+ * Built from every line the ledger holds, not from what a filter has left on
+ * screen, so every month is whole and each one opens where the last closed.
+ */
+function ExportReconciliation({ cards }: { cards: Card[] }) {
+  const [error, setError] = useState<string | null>(null);
+  const accounts = cards.filter((c) => c.tracksBalance !== false);
+  if (!accounts.length) return null;
+
+  const run = () => {
+    setError(null);
+    try {
+      const bytes = buildBankWorkbook(accounts, getTransactions());
+      const today = new Date().toISOString().slice(0, 10);
+      downloadBlob(
+        bytes,
+        `SAB reconciliation ${today}.xlsx`,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <>
+      <Button onClick={run} title="One tab per month for every account, laid out like the SAB reconciliation sheet">
+        Export reconciliation sheet
+      </Button>
+      {error && <span className="text-xs text-negative">{error}</span>}
+    </>
   );
 }
