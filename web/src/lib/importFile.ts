@@ -267,7 +267,12 @@ export type FieldKey =
   // The running balance the statement printed beside the row. Stored, because
   // it is the only independent witness a bank account has: the ledger's own
   // arithmetic agrees with itself whether or not a transaction is missing.
-  | 'statement_balance';
+  | 'statement_balance'
+  // The currency the settled amount is in, where a file says so beside every
+  // row. Never stored — the account's own currency is what a row settles in —
+  // but checked, so a row settled in something else is refused rather than
+  // booked as if it were dirhams.
+  | 'settlement_currency';
 
 export const FIELD_LABELS: Record<FieldKey, string> = {
   date: 'Date',
@@ -291,6 +296,7 @@ export const FIELD_LABELS: Record<FieldKey, string> = {
   amount_abs: 'Amount — the type column says which way',
   txn_type: 'Debit or Credit',
   statement_balance: 'Balance printed on the statement',
+  settlement_currency: 'Currency of the settled amount (checked)',
 };
 
 /**
@@ -301,6 +307,32 @@ export const FIELD_LABELS: Record<FieldKey, string> = {
  * against the card's own convention.
  */
 const ALIASES: { field: FieldKey; patterns: RegExp[] }[] = [
+  /*
+   * The payments sheet — the blank sheet this app hands out for NBD, laid out
+   * like the bank's own payment export:
+   *
+   *   Payment Date | Beneficiary Name | Payment Currency | Payment Amount |
+   *   Customer Reference | Local Currency | Amount in Local Currency
+   *
+   * None of these words was taught to the importer when the blank sheet was
+   * added, so a sheet filled in from the app's own template came back with
+   * only its date found — and that by reading the dates, not the heading. A
+   * file this app writes has to come back in through this door unchanged.
+   *
+   * Listed first, because "Local Currency" and "Payment Currency" would
+   * otherwise be read as two original-currency columns.
+   */
+  { field: 'date', patterns: [/^payment\s*date$/i] },
+  { field: 'supplier', patterns: [/^beneficiary(\s*name)?$/i] },
+  { field: 'currency', patterns: [/^payment\s*currency$/i] },
+  { field: 'original_amount', patterns: [/^payment\s*amount$/i] },
+  { field: 'req_number', patterns: [/^customer\s*reference$/i] },
+  { field: 'settlement_currency', patterns: [/^local\s*currency$/i] },
+  // What the payment cost in the account's own currency. Every line of this
+  // sheet is a payment, so it lowers the balance — on an account that keeps
+  // none, it is still what the payment cost.
+  { field: 'decrease', patterns: [/^amount\s*in\s*local\s*currency$/i] },
+
   { field: 'date', patterns: [/^transaction\s*date$/i, /^date$/i, /^txn\s*date$/i, /^value\s*date$/i] },
   {
     field: 'supplier',
@@ -1124,6 +1156,17 @@ export function buildRows(
     else if (parsed.note) warnings.push(`Date ${parsed.note}.`);
 
     if (!supplier) errors.push('No supplier or description.');
+
+    // Where the file states the currency of the settled amount, it has to be
+    // the account's. A row settled in riyals on a dirham account is refused:
+    // booked as it stands, its riyals would be added to dirhams and the total
+    // would be true of neither.
+    const settledIn = cell(row, mapping.settlement_currency).trim().toUpperCase();
+    const accountCurrency = options.card?.settlementCurrency?.toUpperCase();
+    if (settledIn && accountCurrency && settledIn !== accountCurrency)
+      errors.push(
+        `This row is settled in ${settledIn}, but ${options.card?.name ?? 'the account'} settles in ${accountCurrency}.`,
+      );
 
     /* currency, original amount, rate */
     const currencyCell = parseCurrencyCell(cell(row, mapping.currency));
