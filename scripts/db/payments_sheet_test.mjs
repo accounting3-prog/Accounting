@@ -58,7 +58,8 @@ try {
     client,
     `select id, card_id as "cardId", to_char(txn_date,'YYYY-MM-DD') as txn_date,
             supplier_raw as supplier, supplier_raw, amount_aed::float8 as amount_aed,
-            direction, entry_type, status, req_number, payment_ref
+            direction, entry_type, status, req_number, payment_ref,
+            currency, exchange_rate::float8 as exchange_rate
        from transactions where card_id = $1 and status <> 'voided'`,
     [cardRow.id],
   );
@@ -150,6 +151,56 @@ for (const r of known)
 for (const r of fresh.slice(0, 12))
   console.log(`    ${r.date}  ${String(r.currency || card.settlementCurrency).padEnd(4)} ${money(r.originalAmount ?? r.amountAed).padStart(13)}  = ${money(r.amountAed).padStart(12)} AED  ${String(r.reqNumber ?? '').padEnd(20)} ${String(r.supplier).slice(0, 34)}`);
 if (fresh.length > 12) console.log(`    … and ${fresh.length - 12} more`);
+
+/* ------------------------ the database has to take them, not just the reader */
+
+// The second time this sheet came back, every row was read and four were then
+// refused by the database: dollars and dirhams with no exchange rate. Reading
+// a row is not the test — writing it is. So every new row is sent exactly as
+// the Import screen sends it, inside a transaction that is rolled back.
+const db = await connect();
+const accepted = [];
+const rejected = [];
+try {
+  const [owner] = await q(db, 'select user_id from admins where is_owner limit 1');
+  await db.query('begin');
+  await db.query('set local role authenticated');
+  await db.query(`select set_config('request.jwt.claim.sub', $1, true)`, [owner.user_id]);
+  for (const r of fresh) {
+    await db.query('savepoint one');
+    try {
+      await db.query(
+        `select create_transaction(
+            p_card_id := $1, p_txn_date := $2, p_kind := $3, p_amount_aed := $4,
+            p_supplier := $5, p_req_number := $6, p_payment_ref := null,
+            p_currency := $7, p_original_amount := $8, p_exchange_rate := $9,
+            p_notes := $10, p_needs_review := $11, p_review_reason := $12,
+            p_allow_duplicate := true)`,
+        [card.id, r.date, r.kind, Math.abs(r.amountAed), r.supplier, r.reqNumber,
+         r.currency, r.originalAmount, r.rate, r.notes || null,
+         r.warnings.length > 0, r.warnings.join(' ') || null],
+      );
+      accepted.push(r);
+    } catch (e) {
+      await db.query('rollback to savepoint one');
+      rejected.push({ r, message: e.message });
+    }
+  }
+  await db.query('rollback');
+} finally {
+  await db.end();
+}
+console.log('');
+check('the database accepts every new payment', rejected.length === 0,
+      rejected.length ? `${rejected.length} refused: ${rejected[0].message}` : `${accepted.length} of ${fresh.length}`);
+const converted = fresh.filter((r) => r.currency);
+check('every converted payment carries the rate the file implies',
+      converted.every((r) => r.rate && Math.abs(r.rate * r.originalAmount - r.amountAed) < 0.01),
+      `${converted.length} converted`);
+check('and none is sent to review just for lacking one',
+      converted.every((r) => !r.warnings.some((w) => /rate/i.test(w))), '');
+for (const r of converted)
+  console.log(`    ${r.currency} ${String(r.originalAmount).padStart(11)} × ${r.rate.toFixed(6)} = ${money(r.amountAed).padStart(12)} AED   ${String(r.supplier).slice(0, 36)}`);
 
 /* ----------------------- a row in another currency must not get through */
 

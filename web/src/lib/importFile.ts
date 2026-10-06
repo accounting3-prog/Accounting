@@ -1200,6 +1200,47 @@ export function buildRows(
       originalAmount = null;
     }
 
+    // A payments sheet states what was paid and what it cost in dirhams, and
+    // no rate: the bank's export does not print one. The ledger needs a rate
+    // on every converted row, and refused all four of the dollar and dirham
+    // pairs in the first sheet that came back filled in.
+    //
+    // The rate is not missing, though. It is the one the bank applied, and it
+    // is the dirham cost divided by the amount paid — two figures on the same
+    // line of the same file. That is how the first NBD load stored all 140 of
+    // its converted payments, and it is the same arithmetic here.
+    //
+    // Only where the file has no rate column at all. A file that has one and
+    // leaves it blank on a row is saying something different, and that row
+    // keeps going to review as it always has.
+    let impliedRate: number | null = null;
+    let rateNote = '';
+    if (
+      currency && rate === null && mapping.rate === undefined &&
+      originalAmount && originalAmount > 0 && amountAed && amountAed > 0
+    ) {
+      impliedRate = Math.round((amountAed / originalAmount) * 1e10) / 1e10;
+      rateNote =
+        `rate implied by the file: ${amountAed.toFixed(2)} ÷ ${originalAmount} ${currency}` +
+        ` = ${impliedRate.toFixed(6)}`;
+
+      // A rate that is far from what this account has paid for the same
+      // currency before is more likely two columns swapped than a market move.
+      // It still comes in — the figures are the file's — but for review.
+      const seen = (options.existing ?? [])
+        .filter((t) => t.currency === currency && t.exchange_rate && t.exchange_rate > 0)
+        .map((t) => Number(t.exchange_rate))
+        .sort((a, b) => a - b);
+      if (seen.length >= 3) {
+        const usual = seen[Math.floor(seen.length / 2)];
+        if (Math.abs(impliedRate - usual) / usual > 0.2)
+          warnings.push(
+            `The rate this row implies, ${impliedRate.toFixed(4)}, is far from the ${usual.toFixed(4)}` +
+              ` this account usually pays for ${currency} — check the amounts are in the right columns.`,
+          );
+      }
+    }
+
     const built: ImportRow = {
       sourceRow: r + 1,
       include: errors.length === 0,
@@ -1211,7 +1252,7 @@ export function buildRows(
       kind,
       currency,
       originalAmount,
-      rate: currency ? rate : null,
+      rate: currency ? (rate ?? impliedRate) : null,
       reqNumber: bankChargeReference(supplier, cell(row, mapping.req_number), options.card),
       paymentRef: cell(row, mapping.payment_ref),
       lpoNumber: cell(row, mapping.lpo_number),
@@ -1219,7 +1260,7 @@ export function buildRows(
       crm: cell(row, mapping.crm) || cell(row, mapping.account),
       client: cell(row, mapping.client),
       salesOperation: cell(row, mapping.sales_operation),
-      notes: [cell(row, mapping.notes), carriedNote].filter(Boolean).join(' — '),
+      notes: [cell(row, mapping.notes), carriedNote, rateNote].filter(Boolean).join(' — '),
       statementBalance: parseAmount(cell(row, mapping.statement_balance)),
       errors,
       warnings,
