@@ -1408,6 +1408,25 @@ export interface UpdateRow {
   conflicts: { field: string; sheet: string; ledger: string }[];
   /** Nothing to do: the file says what the ledger already says. */
   unchanged: boolean;
+  /**
+   * Things worth saying that do not stop the line — a date the sheet has a
+   * day out, where the balance and the amount leave no doubt which row it is.
+   */
+  notes: string[];
+  /** How the line was tied to its row: by the id the export wrote, or by the bank's balance. */
+  matchedBy: 'ledger_id' | 'balance' | null;
+  /**
+   * The line names its row but has nothing typed in the field. On a bank sheet
+   * that is most lines, and none of them is an error — they are left alone.
+   */
+  empty: boolean;
+  /**
+   * A bank sheet's line has a value and the ledger already holds a different
+   * one. Not written: a sheet saved last month would otherwise put last
+   * month's numbers back over this month's corrections. A number that really
+   * is wrong is changed from the row's own Edit, one decision at a time.
+   */
+  differs: boolean;
 }
 
 const norm = (v: unknown): string => String(v ?? '').trim();
@@ -1447,6 +1466,33 @@ export function buildUpdateRows(
   const idCol = mapping.ledger_id;
   const valueCol = mapping[UPDATE_SOURCE[opts.field]];
 
+  /*
+   * A bank sheet has no Ledger ID — it is the bank's layout, or this app's
+   * export of it, and neither carries one. What it carries instead is the
+   * running balance the bank printed beside every line, and on a bank account
+   * that balance is unique: no two lines of a statement sit at the same
+   * balance. So the balance names the row as surely as an id would.
+   *
+   * The amount on the line is then checked against the row it found, and a
+   * line whose amount disagrees is stopped. The date is compared too, but only
+   * reported: the hand-kept sheet has had lines a day out from the bank, and
+   * when the balance and the amount both agree there is no doubt which row is
+   * meant — the request number is written, the date is left as the bank has it.
+   */
+  const balanceCol = mapping.statement_balance;
+  const byBalance = new Map<number, Transaction>();
+  const sharedBalance = new Set<number>();
+  const balanceKey = (n: number) => Math.round(n * 100);
+  if (idCol === undefined && balanceCol !== undefined) {
+    for (const t of opts.existing) {
+      if (t.cardId !== opts.cardId || t.status === 'voided' || t.statement_balance == null) continue;
+      const k = balanceKey(Number(t.statement_balance));
+      if (byBalance.has(k)) sharedBalance.add(k);
+      byBalance.set(k, t);
+    }
+  }
+  const matchByBalance = idCol === undefined && balanceCol !== undefined && byBalance.size > 0;
+
   for (let r = headerRow + 1; r < sheet.rows.length; r++) {
     const row = sheet.rows[r] ?? [];
     if (!row.some((c) => norm(c) !== '')) continue;
@@ -1460,10 +1506,79 @@ export function buildUpdateRows(
       errors: [],
       conflicts: [],
       unchanged: false,
+      notes: [],
+      matchedBy: null,
+      empty: false,
+      differs: false,
     };
 
+    if (matchByBalance) {
+      const balance = parseAmount(String(row[balanceCol as number] ?? ''));
+      // The amount, whichever column it is in. Only its size is compared: which
+      // way it moved the balance is already fixed by the row the balance found.
+      const amount = [mapping.decrease, mapping.increase, mapping.amount_abs, mapping.signed_amount]
+        .map((c) => (c === undefined ? null : parseAmount(String(row[c] ?? ''))))
+        .find((v) => v !== null && v !== 0);
+
+      // The opening-balance line, a total, a note under the table: a balance
+      // with no movement beside it is not a transaction, and not a mistake.
+      if (balance === null || amount === null || amount === undefined) continue;
+
+      const k = balanceKey(balance);
+      const existing = byBalance.get(k);
+      if (sharedBalance.has(k)) {
+        built.errors.push('Two rows on this account sit at this balance, so the balance alone cannot say which is meant.');
+      } else if (!existing) {
+        built.errors.push(`No row on this account sits at the balance this line shows (${balance.toFixed(2)}).`);
+      } else {
+        built.id = existing.id;
+        built.existing = existing;
+        built.matchedBy = 'balance';
+        built.current = norm(
+          opts.field === 'payment_ref' ? existing.payment_ref
+          : opts.field === 'req_number' ? existing.req_number
+          : opts.field === 'invoice' ? existing.invoice
+          : existing.lpo_number,
+        );
+
+        if (Math.abs(Math.abs(amount) - Math.abs(existing.amount_aed)) >= 0.005) {
+          built.conflicts.push({
+            field: 'Amount',
+            sheet: Math.abs(amount).toFixed(2),
+            ledger: Math.abs(existing.amount_aed).toFixed(2),
+          });
+          built.errors.push('This line disagrees with the ledger on its amount.');
+        }
+
+        const sheetDate =
+          mapping.date === undefined ? null : parseDate(norm(row[mapping.date]), true).iso;
+        if (sheetDate && existing.txn_date && sheetDate !== existing.txn_date)
+          built.notes.push(
+            `The sheet dates this ${sheetDate}; the bank and the ledger say ${existing.txn_date}. ` +
+              'Only the request number is written — the date stays as the bank has it.',
+          );
+
+        if (!built.value) {
+          built.empty = true;
+        } else if (sameText(built.value, built.current)) {
+          // BAC and bac are the same mark; rewriting four hundred of them to
+          // match the sheet's capitals would be four hundred edits that say
+          // nothing.
+          built.unchanged = true;
+        } else if (built.current) {
+          built.differs = true;
+        }
+      }
+
+      if (built.errors.length || built.unchanged || built.empty || built.differs) built.include = false;
+      out.push(built);
+      continue;
+    }
+
     if (idCol === undefined) {
-      built.errors.push('This file has no Ledger ID column, so there is no way to say which row to update.');
+      built.errors.push(
+        'This file has no Ledger ID column and no BALANCE column, so there is no way to say which row to update.',
+      );
       built.include = false;
       out.push(built);
       continue;
@@ -1471,6 +1586,7 @@ export function buildUpdateRows(
 
     const id = norm(row[idCol]);
     built.id = id || null;
+    built.matchedBy = id ? 'ledger_id' : null;
     if (!id) {
       built.errors.push('No ledger id on this line.');
     } else if (seen.has(id)) {

@@ -227,6 +227,11 @@ export function Import() {
   const updateReady = updateRows.filter((r) => r.include);
   const updateBlocked = updateRows.filter((r) => r.errors.length);
   const updateUnchanged = updateRows.filter((r) => r.unchanged);
+  /** Lines that name their row but have nothing typed in the field — left alone. */
+  const updateEmpty = updateRows.filter((r) => r.empty);
+  /** Bank-sheet lines whose value differs from one the ledger already holds — reported, not written. */
+  const updateDiffers = updateRows.filter((r) => r.differs);
+  const byBalance = updateRows.some((r) => r.matchedBy === 'balance');
 
   const matched = MAPPABLE.filter((f) => mapping[f] !== undefined).map(
     (f) => [f, mapping[f] as number] as const,
@@ -919,7 +924,11 @@ export function Import() {
         {sheet && card && headerRow >= 0 && mode === 'update' && (
           <Panel
             title={`3. Fill in the ${UPDATABLE_LABEL[updateField].toLowerCase()}`}
-            description="Each line is matched to a ledger row by its Ledger ID, and everything else in the file is compared against what the ledger holds. Only the one column is written."
+            description={
+              byBalance
+                ? 'This is a bank sheet, so each line is matched to its row by the balance the bank printed beside it — on this account no two lines share one — and its amount is checked against the row it finds. Only the one column is written.'
+                : 'Each line is matched to a ledger row by its Ledger ID, and everything else in the file is compared against what the ledger holds. Only the one column is written.'
+            }
             action={
               <Button
                 variant="primary"
@@ -947,6 +956,18 @@ export function Import() {
                 {updateBlocked.length > 0 && (
                   <span className="text-negative">
                     <span className="tnum font-semibold">{updateBlocked.length}</span> stopped
+                  </span>
+                )}
+                {updateDiffers.length > 0 && (
+                  <span className="text-review">
+                    <span className="tnum font-semibold">{updateDiffers.length}</span> differ from a
+                    number already in the ledger — left alone
+                  </span>
+                )}
+                {updateEmpty.length > 0 && (
+                  <span className="text-ink-muted">
+                    <span className="tnum font-semibold">{updateEmpty.length}</span> have nothing
+                    typed in — left as they are, not cleared
                   </span>
                 )}
               </div>
@@ -978,7 +999,7 @@ export function Import() {
                     </tr>
                   </thead>
                   <tbody>
-                    {updateRows.map((r) => (
+                    {updateRows.filter((r) => !r.empty).map((r) => (
                       <tr
                         key={r.sourceRow}
                         className={`border-b border-line-soft ${
@@ -1019,10 +1040,22 @@ export function Import() {
                                 </div>
                               ))}
                             </div>
-                          ) : r.unchanged ? (
-                            <Tag>Already set</Tag>
                           ) : (
-                            <Tag tone="accent">Will be written</Tag>
+                            <div className="space-y-1">
+                              {r.unchanged ? (
+                                <Tag>Already set</Tag>
+                              ) : r.differs ? (
+                                <div className="text-xs text-review">
+                                  The ledger already has {r.current} — left alone. If the sheet is
+                                  right, change it from the row&apos;s Edit.
+                                </div>
+                              ) : (
+                                <Tag tone="accent">Will be written</Tag>
+                              )}
+                              {r.notes.map((n, i) => (
+                                <div key={i} className="text-xs text-review">{n}</div>
+                              ))}
+                            </div>
                           )}
                         </td>
                       </tr>
