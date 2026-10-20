@@ -315,10 +315,30 @@ try {
 
   /* ------------------------ the balance, against the figure the bank printed */
 
+  // The statement's closing is the balance at the end of the last day it
+  // covers — not today's. Compared with the account's whole balance, this
+  // check only held while the statement in hand was the newest; checking an
+  // older statement against an account that had moved on reported a gap of
+  // exactly the later months. So the ledger is summed to that same day.
+  const lastDay = rows.map((r) => r.date).filter(Boolean).sort().pop();
+  const [{ l: asAtLastDay }] = await q(
+    client,
+    `select (c.opening_balance + coalesce(sum(t.amount_aed), 0))::float8 l
+       from cards c
+       left join transactions t
+         on t.card_id = c.id and t.status <> 'voided' and t.txn_date <= $2
+      where c.id = $1
+      group by c.opening_balance`,
+    [card.id, lastDay],
+  );
+  const later = Math.abs(after.l - asAtLastDay) >= 0.005;
+
   console.log(`\n  balance before   ${money(before.l).padStart(16)} ${card.settlementCurrency}`);
   console.log(`  balance after    ${money(after.l).padStart(16)} ${card.settlementCurrency}`);
+  if (later)
+    console.log(`  as at ${lastDay}  ${money(asAtLastDay).padStart(16)} ${card.settlementCurrency}   (the account has moved on since)`);
   console.log(`  the bank says    ${money(bank.closing).padStart(16)} ${card.settlementCurrency}`);
-  const gap = after.l - bank.closing;
+  const gap = asAtLastDay - bank.closing;
   console.log(`  difference       ${money(gap).padStart(16)} ${card.settlementCurrency}\n`);
 
   check('the ledger lands on the balance the bank printed', Math.abs(gap) < 0.005,

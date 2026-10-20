@@ -545,8 +545,14 @@ export function bindDirectionColumns(
     return { mapping, note: 'This file has no DEBIT or CREDIT column.' };
   }
 
-  // The card knows which of its own columns decreases the balance.
-  const decreasingIsDebit = card ? DEBIT_RE.test(card.decreasingHeader) : true;
+  // The card knows which of its own columns decreases the balance — where it
+  // has been told. The bank accounts never were: their convention is empty,
+  // and testing an empty string for the word DEBIT came back false, so every
+  // bank sheet was read with DEBIT as money in. An account with no recorded
+  // convention starts from the meaning the word has on a bank statement, and
+  // analyseSheet then checks it against the sheet's own balance column.
+  const recorded = card?.decreasingHeader?.trim() ?? '';
+  const decreasingIsDebit = recorded ? DEBIT_RE.test(recorded) : true;
   if (decreasingIsDebit) {
     if (debit !== undefined) mapping.decrease = debit;
     if (credit !== undefined) mapping.increase = credit;
@@ -559,11 +565,16 @@ export function bindDirectionColumns(
   // total then moves is another, and on RAK 9825 the two come apart. Both are
   // stated, because a reviewer checking an import needs the first and a
   // reviewer checking a balance needs the second.
-  const spendCol = card?.decreasingHeader.trim() ?? '';
-  const receiveCol = card?.increasingHeader.trim() ?? '';
+  const spendCol = card?.decreasingHeader?.trim() ?? '';
+  const receiveCol = card?.increasingHeader?.trim() ?? '';
   const note = !card
     ? 'Choose a card to settle which column is money spent.'
-    : card.balanceSign === -1
+    : !spendCol
+      // Said plainly rather than as a sentence with two holes in it, which is
+      // what this read like for every bank account.
+      ? `${card.name} has no recorded convention, so DEBIT is read as money out and CREDIT as ` +
+        `money in, the way a bank statement uses them.`
+      : card.balanceSign === -1
       ? `On ${card.name} the ${spendCol} column is money spent and ${receiveCol} is money received. ` +
         `This statement's balance counts what has been drawn on the card, not what is left on it, ` +
         `so spending raises the figure and a payment lowers it. The file is read that way.`
@@ -600,12 +611,98 @@ export interface SheetAnalysis {
  * the balance, and how to read its dates. Every part of it is shown to the
  * reviewer and every part can be overridden.
  */
+/**
+ * Which of DEBIT and CREDIT lowers the balance, as the sheet's own balance
+ * column shows it.
+ *
+ * A heading is a word; the running balance is arithmetic. Where a sheet has a
+ * DEBIT, a CREDIT and a BALANCE column, each pair of neighbouring lines either
+ * satisfies "balance = previous − DEBIT + CREDIT" or the reverse, and the one
+ * that holds is the answer. Both reading orders are tried, because the bank's
+ * statement lists its newest line first and the hand-kept sheet its oldest.
+ *
+ * Only a clear answer is returned: at least three lines, and the winning
+ * reading holding on more than twice as many lines as the other. Anything less
+ * is left to the account's convention rather than decided on noise.
+ */
+export function directionFromBalance(
+  rows: string[][],
+  headerRow: number,
+  columns: MappingResult,
+): { decrease: number; increase: number; note: string } | null {
+  // The column that lowers the sheet's balance is money out. Checked against
+  // every card sheet in the 2026 workbook and both bank sheets: it agrees with
+  // all seven recorded card conventions — including the AMEX cards, where it
+  // is CREDIT, and RAK 9825, whose balanceSign of -1 describes how the ledger
+  // compares with the source total, not which way this sheet's column moves.
+  // An earlier version inverted it for balanceSign -1 and read RAK 9825 back
+  // to front; the workbook is what showed it.
+  const D = columns.debitColumns[0];
+  const C = columns.creditColumns[0];
+  const B = columns.balanceColumns[0];
+  if (D === undefined || C === undefined || B === undefined || headerRow < 0) return null;
+
+  const lines = rows
+    .slice(headerRow + 1)
+    .map((r) => ({
+      d: parseAmount(String((r ?? [])[D] ?? '')) ?? 0,
+      c: parseAmount(String((r ?? [])[C] ?? '')) ?? 0,
+      b: parseAmount(String((r ?? [])[B] ?? '')),
+    }))
+    .filter((l) => l.b !== null) as { d: number; c: number; b: number }[];
+
+  let debitLowers = 0;
+  let creditLowers = 0;
+  const near = (x: number, y: number) => Math.abs(x - y) < 0.005;
+  for (let i = 1; i < lines.length; i++) {
+    const [p, l] = [lines[i - 1], lines[i]];
+    if (l.d || l.c) {
+      if (near(l.b, p.b - l.d + l.c)) debitLowers++;
+      else if (near(l.b, p.b + l.d - l.c)) creditLowers++;
+    }
+    if (p.d || p.c) {
+      if (near(p.b, l.b - p.d + p.c)) debitLowers++;
+      else if (near(p.b, l.b + p.d - p.c)) creditLowers++;
+    }
+  }
+
+  const held = Math.max(debitLowers, creditLowers);
+  const other = Math.min(debitLowers, creditLowers);
+  if (held < 3 || held <= other * 2) return null;
+
+  const debitIsOut = debitLowers > creditLowers;
+  const out = debitIsOut ? 'DEBIT' : 'CREDIT';
+  const back = debitIsOut ? 'CREDIT' : 'DEBIT';
+  return {
+    decrease: debitIsOut ? D : C,
+    increase: debitIsOut ? C : D,
+    note:
+      `This sheet's own BALANCE column settles it: line after line the balance falls by the ` +
+      `${out} figure and rises by the ${back} figure (${held} lines agree` +
+      `${other ? `, ${other} do not` : ''}). So ${out} is read as money out and ${back} as money in.`,
+  };
+}
+
 export function analyseSheet(sheet: ParsedSheet, card: Card | undefined): SheetAnalysis {
   const headerRow = detectHeaderRow(sheet.rows);
   const headers = headerRow >= 0 ? (sheet.rows[headerRow] ?? []) : [];
   const columns = mapColumns(headers);
   const bound = bindDirectionColumns(columns, card);
   const mapping = bound.mapping;
+
+  // The account's convention is where a sheet's direction starts; the sheet's
+  // own balance column, where it has one, is where it ends. A convention that
+  // disagrees with the arithmetic is overruled and the overruling is said.
+  let directionNote = bound.note;
+  const settled = directionFromBalance(sheet.rows, headerRow, columns);
+  if (settled) {
+    const overruled = mapping.decrease !== undefined && mapping.decrease !== settled.decrease;
+    mapping.decrease = settled.decrease;
+    mapping.increase = settled.increase;
+    directionNote =
+      settled.note +
+      (overruled ? ` That is the opposite of what ${card?.name ?? 'the account'} records, and the sheet wins.` : '');
+  }
 
   let dateFoundByContent = false;
   if (headerRow >= 0 && mapping.date === undefined) {
@@ -668,7 +765,7 @@ export function analyseSheet(sheet: ParsedSheet, card: Card | undefined): SheetA
     headerRow,
     headers,
     mapping,
-    directionNote: bound.note,
+    directionNote,
     dateFoundByContent,
     dayFirst,
     dayFirstProof: proof,
@@ -1337,6 +1434,73 @@ export function buildRows(
     }
 
     out.push(built);
+  }
+
+  /*
+   * A bank line the sheet dates differently from the bank.
+   *
+   * The hand-kept October sheet put three incoming transfers — 995,197.29,
+   * 151,026.62 and 21,244.67 — on 4 October; the bank posted them on the 1st
+   * and the 2nd, and the ledger holds them from the bank's statement. Matched
+   * on date, amount and narrative, they looked new, and importing the sheet
+   * would have counted 1,167,468.58 of money in twice.
+   *
+   * A bank narrative names its line far more tightly than a card merchant
+   * does: it carries the bank's own voucher and transfer references. So a line
+   * still unmatched after the exact pass is matched again on amount, direction
+   * and narrative alone, within a week either side — but only bank narratives
+   * (several lines of text), only rows the exact pass has not already claimed,
+   * and only where exactly one row fits. Two identical card charges a few days
+   * apart are two charges and are never touched by this.
+   *
+   * The bank's date is the one kept. The line is left out, and says why.
+   */
+  const claimedIds = new Set(
+    out.filter((r) => r.duplicateOf).map((r) => (r.duplicateOf as { id: string }).id),
+  );
+  const isNarrative = (s: string | null | undefined) => /\r?\n/.test(String(s ?? '').trim());
+  const WEEK = 7 * 86400000;
+  const pool = (options.existing ?? []).filter(
+    (t) =>
+      (!options.cardId || t.cardId === options.cardId) &&
+      t.status !== 'voided' &&
+      t.txn_date &&
+      isNarrative(t.supplier_raw ?? t.supplier ?? t.description),
+  );
+  for (const row of out) {
+    if (row.duplicateOf || !row.date || row.amountAed === null || !isNarrative(row.supplier)) continue;
+    const key = supplierKey(row.supplier);
+    const out_ = row.kind === 'purchase' || row.kind === 'fee';
+    const day = Date.parse(row.date);
+    const fits = pool.filter(
+      (t) =>
+        !claimedIds.has(t.id) &&
+        Math.abs(Math.abs(t.amount_aed) - (row.amountAed as number)) < 0.005 &&
+        (t.amount_aed < 0) === out_ &&
+        Math.abs(Date.parse(t.txn_date as string) - day) <= WEEK &&
+        supplierKey(t.supplier_raw ?? t.supplier ?? t.description) === key,
+    );
+    if (fits.length === 1) {
+      const hit = fits[0];
+      claimedIds.add(hit.id);
+      row.duplicateOf = {
+        id: hit.id,
+        date: hit.txn_date ?? '',
+        amount: hit.amount_aed,
+        supplier: hit.supplier ?? hit.description ?? '',
+      };
+      row.warnings.push(
+        `Already in the ledger on ${hit.txn_date}, from the bank's statement — this sheet dates it ` +
+          `${row.date}. The bank's date is kept and the line is not imported again.`,
+      );
+      row.include = false;
+    } else if (fits.length > 1) {
+      row.warnings.push(
+        `${fits.length} lines with this amount and narrative are already in the ledger within a week ` +
+          `of ${row.date}. Left out so it cannot be counted twice — tick it if it really is another.`,
+      );
+      row.include = false;
+    }
   }
 
   // A file re-uploaded with itself: two identical rows inside the same file.

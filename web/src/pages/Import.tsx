@@ -834,6 +834,11 @@ export function Import() {
                         {card?.settlementCurrency ?? 'AED'}
                       </th>
                       <th className="px-3 py-2 font-medium">Type</th>
+                      {/* Shown because it is the column people check first. It
+                          was read all along, but with nowhere on this screen to
+                          appear, a sheet full of request numbers looked as if
+                          none of them had been picked up. */}
+                      <th className="px-3 py-2 font-medium">Request no.</th>
                       <th className="px-3 py-2 font-medium">Original</th>
                       <th className="px-3 py-2 font-medium">Notes on this row</th>
                     </tr>
@@ -886,6 +891,11 @@ export function Import() {
                             )}
                           </td>
                           <td className="px-3 py-2">{KIND_LABEL[row.kind]}</td>
+                          <td className="whitespace-nowrap px-3 py-2">
+                            {String(row.reqNumber ?? '').trim() || (
+                              <span className="text-ink-faint">—</span>
+                            )}
+                          </td>
                           <td className="tnum whitespace-nowrap px-3 py-2 text-ink-muted">
                             {row.currency
                               ? `${row.currency} ${row.originalAmount ?? '?'}`
